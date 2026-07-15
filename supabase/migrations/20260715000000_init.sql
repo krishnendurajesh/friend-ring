@@ -430,16 +430,21 @@ create or replace function public.check_cart_approvals_transition()
 returns trigger as $$
 declare
   v_ring_id uuid;
+  v_receiver_user_id uuid;
   v_total_members int;
   v_approved_members int;
 begin
-  -- Get ring_id of the cart
-  select ring_id into v_ring_id from public.carts where id = new.cart_id;
+  -- Get ring_id and receiver of the cart
+  select ring_id, receiver_user_id into v_ring_id, v_receiver_user_id 
+  from public.carts 
+  where id = new.cart_id;
 
-  -- Count accepted members in the ring
+  -- Count accepted members in the ring (excluding the receiver if there is one)
   select count(*) into v_total_members
   from public.ring_members
-  where ring_id = v_ring_id and status = 'accepted';
+  where ring_id = v_ring_id 
+    and status = 'accepted'
+    and (v_receiver_user_id is null or user_id != v_receiver_user_id);
 
   -- Count approved members for this cart
   select count(*) into v_approved_members
