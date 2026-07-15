@@ -353,15 +353,29 @@ export default function SharedCartPage({ params }: { params: Promise<{ id: strin
       return;
     }
 
-    await supabase
+    const { error } = await supabase
       .from('cart_items')
       .update({ quantity: newQty })
       .eq('cart_id', cart.id)
       .eq('product_id', productId);
+
+    if (error) {
+      console.error('Error updating quantity:', error);
+      alert('Failed to update quantity: ' + error.message);
+    }
   };
 
   const removeItem = async (productId: string) => {
-    await supabase.from('cart_items').delete().eq('cart_id', cart.id).eq('product_id', productId);
+    const { error } = await supabase
+      .from('cart_items')
+      .delete()
+      .eq('cart_id', cart.id)
+      .eq('product_id', productId);
+
+    if (error) {
+      console.error('Error removing item:', error);
+      alert('Failed to remove item: ' + error.message);
+    }
   };
 
   // Set Cart Receiver
@@ -503,16 +517,22 @@ export default function SharedCartPage({ params }: { params: Promise<{ id: strin
 
   // Helper wishlist panel add to cart action
   const addWishlistItemToCart = async (productId: string) => {
-    const existingItem = cartItems.find((item) => item.product_id === productId);
-    if (existingItem) {
-      await updateQuantity(productId, 1, existingItem.quantity);
-    } else {
-      await supabase.from('cart_items').insert({
-        cart_id: cart.id,
-        product_id: productId,
-        added_by_user_id: user.id,
-        quantity: 1,
-      });
+    try {
+      const existingItem = cartItems.find((item) => item.product_id === productId);
+      if (existingItem) {
+        await updateQuantity(productId, 1, existingItem.quantity);
+      } else {
+        const { error } = await supabase.from('cart_items').insert({
+          cart_id: cart.id,
+          product_id: productId,
+          added_by_user_id: user.id,
+          quantity: 1,
+        });
+        if (error) throw error;
+      }
+    } catch (err: any) {
+      console.error('Failed to add wishlist item to cart:', err);
+      alert('Error adding item to cart: ' + (err?.message || err));
     }
   };
 
