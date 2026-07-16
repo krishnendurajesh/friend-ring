@@ -7,7 +7,7 @@ import { Calendar, MapPin, Sparkles, CheckCircle } from 'lucide-react';
 export default function OnboardingPage() {
   const [birthday, setBirthday] = useState('');
   const [address, setAddress] = useState('');
-  const [giftPreferences, setGiftPreferences] = useState('');
+  const [preferenceBio, setPreferenceBio] = useState('');
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const router = useRouter();
@@ -17,15 +17,15 @@ export default function OnboardingPage() {
     setLoading(true);
     setErrorMsg('');
 
-    if (!birthday || !address || !giftPreferences) {
+    if (!birthday || !address || !preferenceBio) {
       setErrorMsg('All fields are required.');
       setLoading(false);
       return;
     }
 
-    const chars = giftPreferences.trim().length;
+    const chars = preferenceBio.trim().length;
     if (chars < 50 || chars > 100) {
-      setErrorMsg(`Gift preferences must be between 50 and 100 characters (currently ${chars} characters).`);
+      setErrorMsg(`Preference bio must be between 50 and 100 characters (currently ${chars} characters).`);
       setLoading(false);
       return;
     }
@@ -36,7 +36,7 @@ export default function OnboardingPage() {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ birthday, address, gift_preferences: giftPreferences }),
+        body: JSON.stringify({ birthday, address, preference_bio: preferenceBio }),
       });
 
       const result = await response.json();
@@ -132,29 +132,29 @@ export default function OnboardingPage() {
             </span>
           </div>
 
-          {/* Gift Preferences Field */}
+          {/* Preference Bio Field */}
           <div className="form-group" style={{ marginBottom: '32px' }}>
-            <label className="form-label" htmlFor="giftPreferences" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
-              <span>Gift Preferences (50-100 characters)</span>
-              <span style={{ fontSize: '12px', fontWeight: 'bold', color: giftPreferences.trim().length < 50 || giftPreferences.trim().length > 100 ? 'var(--color-rose)' : 'var(--color-green)' }}>
-                {giftPreferences.trim().length} characters
+            <label className="form-label" htmlFor="preferenceBio" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
+              <span>Preference Bio (50-100 characters)</span>
+              <span style={{ fontSize: '12px', fontWeight: 'bold', color: preferenceBio.trim().length < 50 || preferenceBio.trim().length > 100 ? 'var(--color-rose)' : 'var(--color-green)' }}>
+                {preferenceBio.trim().length} characters
               </span>
             </label>
             <div style={{ position: 'relative' }}>
               <Sparkles size={18} style={{ position: 'absolute', left: '16px', top: '16px', color: 'var(--text-muted)' }} />
               <textarea
-                id="giftPreferences"
+                id="preferenceBio"
                 required
-                placeholder="Describe your styling tastes (e.g. gold jewellery stackers, minimalist, size 7, rose gold accents, favorite materials, or style preferences)."
-                value={giftPreferences}
-                onChange={(e) => setGiftPreferences(e.target.value)}
+                placeholder="Describe your styling tastes (e.g. jewelry, blue is fav color, prefers necklaces and earrings...)."
+                value={preferenceBio}
+                onChange={(e) => setPreferenceBio(e.target.value)}
                 className="form-input"
                 style={{ paddingLeft: '48px', minHeight: '120px', resize: 'vertical', paddingTop: '14px' }}
                 disabled={loading}
               />
             </div>
             <span style={{ fontSize: '11px', color: 'var(--text-muted)', display: 'block', marginTop: '6px' }}>
-              Helps friends select the perfect jewelry stack or custom gift for you.
+              Used by AI to suggest the perfect matching gifts from our catalog.
             </span>
           </div>
 

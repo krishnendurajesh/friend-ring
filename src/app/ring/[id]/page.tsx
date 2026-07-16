@@ -101,7 +101,7 @@ export default function RingDetailPage({ params }: { params: Promise<{ id: strin
           id,
           name,
           email,
-          gift_preferences
+          preference_bio
         )
       `)
       .eq('ring_id', ringId);
@@ -338,7 +338,7 @@ export default function RingDetailPage({ params }: { params: Promise<{ id: strin
                     <span style={{ display: 'block', fontSize: '12px', color: 'var(--text-secondary)' }}>
                       {profile.email}
                     </span>
-                    {profile.gift_preferences && (
+                    {profile.preference_bio && (
                       <div
                         style={{
                           marginTop: '10px',
@@ -352,7 +352,7 @@ export default function RingDetailPage({ params }: { params: Promise<{ id: strin
                           maxWidth: '400px'
                         }}
                       >
-                        <strong>🎁 Gift Taste:</strong> {profile.gift_preferences}
+                        <strong>🎁 Gift Taste:</strong> {profile.preference_bio}
                       </div>
                     )}
                   </div>

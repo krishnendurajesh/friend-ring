@@ -20,35 +20,38 @@ export default function DashboardPage() {
   const [invites, setInvites] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // Gift Preferences state
-  const [giftPreferences, setGiftPreferences] = useState('');
-  const [tempPreferences, setTempPreferences] = useState('');
-  const [isEditingPreferences, setIsEditingPreferences] = useState(false);
+  // Preference Bio state
+  const [preferenceBio, setPreferenceBio] = useState('');
+  const [tempBio, setTempBio] = useState('');
+  const [isEditingBio, setIsEditingBio] = useState(false);
   const [saveLoading, setSaveLoading] = useState(false);
 
   const supabase = createClient();
   const router = useRouter();
 
-  const handleSavePreferences = async (e: React.FormEvent) => {
+  const handleSaveBio = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user) return;
-    const chars = tempPreferences.trim().length;
+    const chars = tempBio.trim().length;
     if (chars < 50 || chars > 100) {
-      alert(`Gift preferences must be between 50 and 100 characters (currently ${chars} characters).`);
+      alert(`Preference bio must be between 50 and 100 characters (currently ${chars} characters).`);
       return;
     }
 
     setSaveLoading(true);
     const { error } = await supabase
       .from('profiles')
-      .update({ gift_preferences: tempPreferences.trim() })
+      .update({ 
+        preference_bio: tempBio.trim(),
+        updated_at: new Date().toISOString()
+      })
       .eq('id', user.id);
 
     if (error) {
-      alert('Error saving preferences: ' + error.message);
+      alert('Error saving preference bio: ' + error.message);
     } else {
-      setGiftPreferences(tempPreferences.trim());
-      setIsEditingPreferences(false);
+      setPreferenceBio(tempBio.trim());
+      setIsEditingBio(false);
     }
     setSaveLoading(false);
   };
@@ -63,15 +66,15 @@ export default function DashboardPage() {
       setUser(user);
       await fetchData(user.id);
 
-      // Fetch user profile gift preferences
+      // Fetch user profile preference bio
       const { data: profile } = await supabase
         .from('profiles')
-        .select('gift_preferences')
+        .select('preference_bio')
         .eq('id', user.id)
         .single();
       
       if (profile) {
-        setGiftPreferences(profile.gift_preferences || '');
+        setPreferenceBio(profile.preference_bio || '');
       }
     };
 
@@ -230,30 +233,30 @@ export default function DashboardPage() {
         </Link>
       </div>
 
-      {/* Gift Profile Card */}
+      {/* Preference Bio Card */}
       <div className="card" style={{ marginBottom: '40px', background: 'linear-gradient(135deg, rgba(255,255,255,0.01) 0%, rgba(212,175,55,0.02) 100%)' }}>
         <div style={{ maxWidth: '800px' }}>
           <h3 style={{ fontSize: '18px', fontWeight: '700', color: 'white', display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
-            <Sparkles size={18} style={{ color: 'var(--color-gold)' }} /> My Gift Preferences
+            <Sparkles size={18} style={{ color: 'var(--color-gold)' }} /> My Preference Bio
           </h3>
-          {isEditingPreferences ? (
-            <form onSubmit={handleSavePreferences}>
+          {isEditingBio ? (
+            <form onSubmit={handleSaveBio}>
               <textarea
-                value={tempPreferences}
-                onChange={(e) => setTempPreferences(e.target.value)}
+                value={tempBio}
+                onChange={(e) => setTempBio(e.target.value)}
                 className="form-input"
                 style={{ minHeight: '80px', resize: 'vertical', fontSize: '14px', marginBottom: '12px', padding: '12px' }}
-                placeholder="Describe your styling tastes (e.g. gold jewellery stackers, minimalist, size 7, rose gold accents, favorite materials, or style preferences)."
+                placeholder="Describe your styling tastes (e.g. jewelry, blue is fav color, prefers necklaces and earrings...)."
                 required
               />
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span style={{ fontSize: '12px', fontWeight: 'bold', color: tempPreferences.trim().length < 50 || tempPreferences.trim().length > 100 ? 'var(--color-rose)' : 'var(--color-green)' }}>
-                  {tempPreferences.trim().length} characters (Requires 50-100 characters)
+                <span style={{ fontSize: '12px', fontWeight: 'bold', color: tempBio.trim().length < 50 || tempBio.trim().length > 100 ? 'var(--color-rose)' : 'var(--color-green)' }}>
+                  {tempBio.trim().length} characters (Requires 50-100 characters)
                 </span>
                 <div style={{ display: 'flex', gap: '8px' }}>
                   <button
                     type="button"
-                    onClick={() => setIsEditingPreferences(false)}
+                    onClick={() => setIsEditingBio(false)}
                     className="btn btn-secondary"
                     style={{ padding: '6px 12px', fontSize: '12px' }}
                   >
@@ -261,7 +264,7 @@ export default function DashboardPage() {
                   </button>
                   <button
                     type="submit"
-                    disabled={saveLoading || tempPreferences.trim().length < 50 || tempPreferences.trim().length > 100}
+                    disabled={saveLoading || tempBio.trim().length < 50 || tempBio.trim().length > 100}
                     className="btn btn-primary"
                     style={{ padding: '6px 12px', fontSize: '12px' }}
                   >
@@ -272,18 +275,18 @@ export default function DashboardPage() {
             </form>
           ) : (
             <div>
-              <p style={{ color: 'var(--text-secondary)', fontSize: '14px', fontStyle: giftPreferences ? 'normal' : 'italic', lineHeight: '1.6' }}>
-                {giftPreferences ? `"${giftPreferences}"` : 'Tell your Ring members what kinds of jewelry stackers, sizes, or styling themes you love. Click Edit to fill this in!'}
+              <p style={{ color: 'var(--text-secondary)', fontSize: '14px', fontStyle: preferenceBio ? 'normal' : 'italic', lineHeight: '1.6' }}>
+                {preferenceBio ? `"${preferenceBio}"` : 'Tell your Ring members what kinds of jewelry stackers, sizes, or styling themes you love. Click Edit to fill this in!'}
               </p>
               <button
                 onClick={() => {
-                  setTempPreferences(giftPreferences);
-                  setIsEditingPreferences(true);
+                  setTempBio(preferenceBio);
+                  setIsEditingBio(true);
                 }}
                 className="btn btn-secondary"
                 style={{ marginTop: '14px', padding: '6px 12px', fontSize: '12px' }}
               >
-                Edit Preferences
+                Edit Bio
               </button>
             </div>
           )}

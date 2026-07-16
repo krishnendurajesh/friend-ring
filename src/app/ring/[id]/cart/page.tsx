@@ -20,6 +20,7 @@ import {
   MapPin,
   CheckCircle,
   HelpCircle,
+  Sparkles,
 } from 'lucide-react';
 
 interface CartItem {
@@ -54,6 +55,11 @@ export default function SharedCartPage({ params }: { params: Promise<{ id: strin
   const [wishlistItems, setWishlistItems] = useState<any[]>([]);
   const [decryptedAddress, setDecryptedAddress] = useState('');
   const [loadingAddress, setLoadingAddress] = useState(false);
+
+  // AI Suggestions states
+  const [aiSuggestions, setAiSuggestions] = useState<any[]>([]);
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiError, setAiError] = useState('');
 
   // Split payment forms
   const [pledgeInput, setPledgeInput] = useState('');
@@ -222,6 +228,7 @@ export default function SharedCartPage({ params }: { params: Promise<{ id: strin
       // If receiver exists, fetch receiver's wishlist items for helper panel
       if (activeCart.receiver_user_id) {
         fetchReceiverWishlist(activeCart.receiver_user_id);
+        fetchAISuggestions(activeCart.receiver_user_id);
       }
 
       // If completed or pending, decrypt recipient address
@@ -326,6 +333,35 @@ export default function SharedCartPage({ params }: { params: Promise<{ id: strin
     }
   };
 
+  const fetchAISuggestions = async (receiverId: string, forceRefresh = false) => {
+    if (user && receiverId === user.id) {
+      setAiSuggestions([]);
+      return;
+    }
+
+    setAiLoading(true);
+    setAiError('');
+    try {
+      const response = await fetch('/api/ai/suggest-gifts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ receiverUserId: receiverId, ringId, refresh: forceRefresh }),
+      });
+      const data = await response.json();
+      if (response.ok) {
+        setAiSuggestions(data.suggestions || []);
+      } else {
+        setAiError(data.error || 'AI suggestions unavailable right now');
+        console.error('AI suggestion route error:', data.error);
+      }
+    } catch (err) {
+      setAiError('AI suggestions unavailable right now');
+      console.error('Failed to load AI suggestions:', err);
+    } finally {
+      setAiLoading(false);
+    }
+  };
+
   const decryptRecipientAddress = async (receiverId: string) => {
     setLoadingAddress(true);
     try {
@@ -392,8 +428,10 @@ export default function SharedCartPage({ params }: { params: Promise<{ id: strin
       setCart((prev: any) => ({ ...prev, receiver_user_id: receiverId }));
       if (receiverId) {
         fetchReceiverWishlist(receiverId);
+        fetchAISuggestions(receiverId);
       } else {
         setWishlistItems([]);
+        setAiSuggestions([]);
       }
       router.refresh();
     }
@@ -506,6 +544,8 @@ export default function SharedCartPage({ params }: { params: Promise<{ id: strin
       setApprovals([]);
       setContributions([]);
       setWishlistItems([]);
+      setAiSuggestions([]);
+      setAiError('');
       setDecryptedAddress('');
       setSurpriseGift(false);
       await loadRingData(user.id);
@@ -770,52 +810,142 @@ export default function SharedCartPage({ params }: { params: Promise<{ id: strin
                   </div>
                 </div>
 
-                {/* Wishlist Helper Panel */}
-                {cart.receiver_user_id && wishlistItems.length > 0 && (
+                {/* Wishlist & AI Suggestions Helper Panel */}
+                {cart.receiver_user_id && (wishlistItems.length > 0 || aiSuggestions.length > 0 || aiLoading || aiError) && (
                   <div className="card" style={{ border: '1px solid rgba(212,175,55,0.3)', background: 'radial-gradient(circle at bottom, rgba(212,175,55,0.03) 0%, transparent 70%)' }}>
-                    <h3 style={{ fontSize: '18px', fontWeight: '700', color: 'var(--color-gold)', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <Heart size={18} fill="var(--color-gold)" /> Wishlist Helper Panel
-                    </h3>
-                    <p style={{ color: 'var(--text-secondary)', fontSize: '12px', marginBottom: '20px' }}>
-                      Here is what they wished for. Click to add them directly to the group cart:
-                    </p>
+                    
+                    {/* User Wishlist Sub-section */}
+                    {wishlistItems.length > 0 && (
+                      <div style={{ marginBottom: (aiSuggestions.length > 0 || aiLoading || aiError) ? '24px' : '0' }}>
+                        <h3 style={{ fontSize: '18px', fontWeight: '700', color: 'var(--color-gold)', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <Heart size={18} fill="var(--color-gold)" /> Wishlist Helper Panel
+                        </h3>
+                        <p style={{ color: 'var(--text-secondary)', fontSize: '12px', marginBottom: '20px' }}>
+                          Here is what they wished for. Click to add them directly to the group cart:
+                        </p>
 
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(130px, 1fr))', gap: '16px' }}>
-                      {wishlistItems.map((prod) => (
-                        <div
-                          key={prod.id}
-                          style={{
-                            background: 'rgba(0,0,0,0.2)',
-                            border: '1px solid var(--border-color)',
-                            borderRadius: 'var(--radius-sm)',
-                            padding: '10px',
-                            display: 'flex',
-                            flexDirection: 'column',
-                            alignItems: 'center',
-                            textAlign: 'center',
-                          }}
-                        >
-                          <img
-                            src={prod.image_url}
-                            alt={prod.name}
-                            style={{ width: '50px', height: '50px', borderRadius: '4px', objectFit: 'cover', marginBottom: '8px' }}
-                          />
-                          <span style={{ fontSize: '12px', fontWeight: 600, color: 'white', display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', width: '100%' }}>
-                            {prod.name}
-                          </span>
-                          <span style={{ fontSize: '11px', color: 'var(--color-gold)', display: 'block', marginBottom: '8px' }}>
-                            ₹{prod.price.toLocaleString()}
-                          </span>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(130px, 1fr))', gap: '16px' }}>
+                          {wishlistItems.map((prod) => (
+                            <div
+                              key={prod.id}
+                              style={{
+                                background: 'rgba(0,0,0,0.2)',
+                                border: '1px solid var(--border-color)',
+                                borderRadius: 'var(--radius-sm)',
+                                padding: '10px',
+                                display: 'flex',
+                                flexDirection: 'column',
+                                alignItems: 'center',
+                                textAlign: 'center',
+                              }}
+                            >
+                              <img
+                                src={prod.image_url}
+                                alt={prod.name}
+                                style={{ width: '50px', height: '50px', borderRadius: '4px', objectFit: 'cover', marginBottom: '8px' }}
+                              />
+                              <span style={{ fontSize: '12px', fontWeight: 600, color: 'white', display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', width: '100%' }}>
+                                {prod.name}
+                              </span>
+                              <span style={{ fontSize: '11px', color: 'var(--color-gold)', display: 'block', marginBottom: '8px' }}>
+                                ₹{prod.price.toLocaleString()}
+                              </span>
+                              <button
+                                onClick={() => addWishlistItemToCart(prod.id)}
+                                className="btn btn-primary"
+                                style={{ padding: '4px 8px', fontSize: '10px', width: '100%', borderRadius: '4px' }}
+                              >
+                                Add to Cart
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Divider */}
+                    {wishlistItems.length > 0 && (aiSuggestions.length > 0 || aiLoading || aiError) && (
+                      <div style={{ height: '1px', background: 'var(--border-color)', margin: '24px 0' }}></div>
+                    )}
+
+                    {/* AI Suggestions Sub-section */}
+                    {(aiSuggestions.length > 0 || aiLoading || aiError) && (
+                      <div>
+                        <div className="flex-between" style={{ marginBottom: '16px', flexWrap: 'wrap', gap: '8px' }}>
+                          <h4 style={{ fontSize: '16px', fontWeight: '700', color: 'var(--color-gold)', display: 'flex', alignItems: 'center', gap: '6px', margin: 0 }}>
+                            <Sparkles size={16} /> AI Suggested Gifts
+                          </h4>
                           <button
-                            onClick={() => addWishlistItemToCart(prod.id)}
-                            className="btn btn-primary"
-                            style={{ padding: '4px 8px', fontSize: '10px', width: '100%', borderRadius: '4px' }}
+                            type="button"
+                            onClick={() => fetchAISuggestions(cart.receiver_user_id, true)}
+                            disabled={aiLoading}
+                            className="btn btn-secondary"
+                            style={{ padding: '4px 8px', fontSize: '10px', display: 'flex', alignItems: 'center', gap: '4px' }}
                           >
-                            Add to Cart
+                            Refresh suggestions
                           </button>
                         </div>
-                      ))}
-                    </div>
+
+                        {aiLoading && (
+                          <div style={{ padding: '20px 0', textAlign: 'center', color: 'var(--text-muted)', fontSize: '12px' }}>
+                            Thinking of the perfect gift suggestions...
+                          </div>
+                        )}
+
+                        {aiError && !aiLoading && (
+                          <div style={{ color: 'var(--text-muted)', fontSize: '12px', fontStyle: 'italic', marginBottom: '12px' }}>
+                            ⚠️ AI suggestions unavailable right now.
+                          </div>
+                        )}
+
+                        {!aiLoading && !aiError && aiSuggestions.length > 0 && (
+                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: '16px' }}>
+                            {aiSuggestions.map(({ product: prod, reason }) => (
+                              <div
+                                key={prod.id}
+                                style={{
+                                  background: 'rgba(0,0,0,0.2)',
+                                  border: '1px solid var(--border-color)',
+                                  borderRadius: 'var(--radius-sm)',
+                                  padding: '12px',
+                                  display: 'flex',
+                                  flexDirection: 'column',
+                                  alignItems: 'center',
+                                  textAlign: 'center',
+                                  justifyContent: 'space-between',
+                                  minHeight: '230px'
+                                }}
+                              >
+                                <div>
+                                  <img
+                                    src={prod.image_url}
+                                    alt={prod.name}
+                                    style={{ width: '50px', height: '50px', borderRadius: '4px', objectFit: 'cover', marginBottom: '8px' }}
+                                  />
+                                  <span style={{ fontSize: '12px', fontWeight: 600, color: 'white', display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', width: '100%', marginBottom: '2px' }}>
+                                    {prod.name}
+                                  </span>
+                                  <span style={{ fontSize: '11px', color: 'var(--color-gold)', display: 'block', marginBottom: '6px' }}>
+                                    ₹{prod.price.toLocaleString()}
+                                  </span>
+                                  <p style={{ fontSize: '10px', color: 'var(--text-secondary)', lineHeight: '1.3', marginBottom: '10px', display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden', textAlign: 'left' }}>
+                                    <strong>AI Reason:</strong> {reason}
+                                  </p>
+                                </div>
+                                <button
+                                  onClick={() => addWishlistItemToCart(prod.id)}
+                                  className="btn btn-primary"
+                                  style={{ padding: '4px 8px', fontSize: '10px', width: '100%', borderRadius: '4px' }}
+                                >
+                                  Add to Cart
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
                   </div>
                 )}
 
