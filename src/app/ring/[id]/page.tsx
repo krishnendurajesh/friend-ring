@@ -4,7 +4,7 @@ import React, { useState, useEffect, use } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/utils/supabase';
-import { ArrowLeft, Users, UserPlus, Gift, MessageSquare, Search, Trash2, Mail } from 'lucide-react';
+import { ArrowLeft, Users, UserPlus, Gift, MessageSquare, Search, Trash2, Mail, Calendar, Sparkles } from 'lucide-react';
 
 export default function RingDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id: ringId } = use(params);
@@ -17,6 +17,12 @@ export default function RingDetailPage({ params }: { params: Promise<{ id: strin
   const [inviteLoading, setInviteLoading] = useState(false);
   const [currentUserProfile, setCurrentUserProfile] = useState<any>(null);
   const [errorMessage, setErrorMessage] = useState('');
+
+  // Custom Celebrations State
+  const [events, setEvents] = useState<any[]>([]);
+  const [eventName, setEventName] = useState('');
+  const [eventDate, setEventDate] = useState('');
+  const [eventLoading, setEventLoading] = useState(false);
 
   const supabase = createClient();
   const router = useRouter();
@@ -40,11 +46,12 @@ export default function RingDetailPage({ params }: { params: Promise<{ id: strin
 
       await fetchRingDetails();
       await fetchMembers();
+      await fetchEvents();
     };
 
     initPage();
 
-    // Subscribe to changes in ring members to keep list in sync
+    // Subscribe to changes in ring members & events to keep lists in sync
     const channel = supabase
       .channel(`ring_detail_${ringId}`)
       .on(
@@ -52,6 +59,13 @@ export default function RingDetailPage({ params }: { params: Promise<{ id: strin
         { event: '*', schema: 'public', table: 'ring_members', filter: `ring_id=eq.${ringId}` },
         () => {
           fetchMembers();
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'ring_events', filter: `ring_id=eq.${ringId}` },
+        () => {
+          fetchEvents();
         }
       )
       .subscribe();
@@ -95,6 +109,56 @@ export default function RingDetailPage({ params }: { params: Promise<{ id: strin
       setMembers(data);
     }
     setLoading(false);
+  };
+
+  const fetchEvents = async () => {
+    const { data, error } = await supabase
+      .from('ring_events')
+      .select('*')
+      .eq('ring_id', ringId)
+      .order('event_date', { ascending: true });
+
+    if (!error && data) {
+      setEvents(data);
+    }
+  };
+
+  const handleAddEvent = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!eventName.trim() || !eventDate) return;
+    setEventLoading(true);
+
+    const { error } = await supabase
+      .from('ring_events')
+      .insert({
+        ring_id: ringId,
+        name: eventName,
+        event_date: eventDate,
+      });
+
+    if (error) {
+      alert('Error adding celebration: ' + error.message);
+    } else {
+      setEventName('');
+      setEventDate('');
+      await fetchEvents();
+    }
+    setEventLoading(false);
+  };
+
+  const handleDeleteEvent = async (eventId: string) => {
+    if (!confirm('Are you sure you want to remove this celebration?')) return;
+
+    const { error } = await supabase
+      .from('ring_events')
+      .delete()
+      .eq('id', eventId);
+
+    if (error) {
+      alert('Error deleting event: ' + error.message);
+    } else {
+      await fetchEvents();
+    }
   };
 
   // Search users in database to invite
@@ -309,67 +373,154 @@ export default function RingDetailPage({ params }: { params: Promise<{ id: strin
 
         {/* Invite Column (Only if user has accepted membership) */}
         {userStatus === 'accepted' ? (
-          <div className="card">
-            <h3 style={{ fontSize: '20px', fontWeight: '700', marginBottom: '20px', color: 'white', display: 'flex', alignItems: 'center', gap: '10px' }}>
-              <UserPlus size={20} style={{ color: 'var(--color-gold)' }} /> Invite Friends
-            </h3>
-            
-            <p style={{ color: 'var(--text-secondary)', fontSize: '13px', marginBottom: '20px' }}>
-              Search for users by their name or email to invite them to this Ring.
-            </p>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+            {/* Invite Friends Card */}
+            <div className="card">
+              <h3 style={{ fontSize: '20px', fontWeight: '700', marginBottom: '20px', color: 'white', display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <UserPlus size={20} style={{ color: 'var(--color-gold)' }} /> Invite Friends
+              </h3>
+              
+              <p style={{ color: 'var(--text-secondary)', fontSize: '13px', marginBottom: '20px' }}>
+                Search for users by their name or email to invite them to this Ring.
+              </p>
 
-            <form onSubmit={handleSearch} style={{ display: 'flex', gap: '10px', marginBottom: '24px' }}>
-              <div style={{ position: 'relative', flexGrow: 1 }}>
-                <Search size={18} style={{ position: 'absolute', left: '16px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
-                <input
-                  type="text"
-                  placeholder="Search by name or email..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="form-input"
-                  style={{ paddingLeft: '48px' }}
-                />
-              </div>
-              <button type="submit" className="btn btn-secondary">Search</button>
-            </form>
+              <form onSubmit={handleSearch} style={{ display: 'flex', gap: '10px', marginBottom: '24px' }}>
+                <div style={{ position: 'relative', flexGrow: 1 }}>
+                  <Search size={18} style={{ position: 'absolute', left: '16px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
+                  <input
+                    type="text"
+                    placeholder="Search by name or email..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    className="form-input"
+                    style={{ paddingLeft: '48px' }}
+                  />
+                </div>
+                <button type="submit" className="btn btn-secondary">Search</button>
+              </form>
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              {searchResults.length > 0 &&
-                searchResults.map((targetUser) => (
-                  <div
-                    key={targetUser.id}
-                    className="flex-between"
-                    style={{
-                      padding: '12px 16px',
-                      background: 'rgba(255,255,255,0.03)',
-                      border: '1px solid var(--border-color)',
-                      borderRadius: 'var(--radius-md)',
-                    }}
-                  >
-                    <div>
-                      <span style={{ display: 'block', fontWeight: '600', color: 'white', fontSize: '13px' }}>
-                        {targetUser.name}
-                      </span>
-                      <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
-                        {targetUser.email}
-                      </span>
-                    </div>
-                    <button
-                      disabled={inviteLoading}
-                      onClick={() => handleInvite(targetUser)}
-                      className="btn btn-primary"
-                      style={{ padding: '6px 12px', fontSize: '11px' }}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                {searchResults.length > 0 &&
+                  searchResults.map((targetUser) => (
+                    <div
+                      key={targetUser.id}
+                      className="flex-between"
+                      style={{
+                        padding: '12px 16px',
+                        background: 'rgba(255,255,255,0.03)',
+                        border: '1px solid var(--border-color)',
+                        borderRadius: 'var(--radius-md)',
+                      }}
                     >
-                      Invite
+                      <div>
+                        <span style={{ display: 'block', fontWeight: '600', color: 'white', fontSize: '13px' }}>
+                          {targetUser.name}
+                        </span>
+                        <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
+                          {targetUser.email}
+                        </span>
+                      </div>
+                      <button
+                        disabled={inviteLoading}
+                        onClick={() => handleInvite(targetUser)}
+                        className="btn btn-primary"
+                        style={{ padding: '6px 12px', fontSize: '11px' }}
+                      >
+                        Invite
+                      </button>
+                    </div>
+                  ))}
+
+                {searchQuery && searchResults.length === 0 && (
+                  <div style={{ textAlign: 'center', padding: '24px 0', color: 'var(--text-muted)', fontSize: '13px' }}>
+                    No matching users found or they are already members.
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Custom Celebrations Card */}
+            <div className="card">
+              <h3 style={{ fontSize: '20px', fontWeight: '700', marginBottom: '20px', color: 'white', display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <Sparkles size={20} style={{ color: 'var(--color-gold)' }} /> Custom Celebrations
+              </h3>
+              
+              <p style={{ color: 'var(--text-secondary)', fontSize: '13px', marginBottom: '20px' }}>
+                Add anniversaries, milestones, or recurring events. Everyone in the Ring will get reminders!
+              </p>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '24px' }}>
+                {events.length > 0 ? (
+                  events.map((event) => (
+                    <div
+                      key={event.id}
+                      className="flex-between"
+                      style={{
+                        padding: '12px 16px',
+                        background: 'rgba(255,255,255,0.02)',
+                        border: '1px solid var(--border-color)',
+                        borderRadius: 'var(--radius-md)',
+                      }}
+                    >
+                      <div>
+                        <span style={{ display: 'block', fontWeight: '600', color: 'white', fontSize: '14px' }}>
+                          {event.name}
+                        </span>
+                        <span style={{ fontSize: '12px', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '4px', marginTop: '4px' }}>
+                          <Calendar size={12} style={{ color: 'var(--color-gold)' }} />
+                          {new Date(event.event_date).toLocaleDateString(undefined, { month: 'long', day: 'numeric' })} (Annual)
+                        </span>
+                      </div>
+                      <button
+                        onClick={() => handleDeleteEvent(event.id)}
+                        className="btn-icon"
+                        style={{ padding: '6px', color: 'var(--color-rose)' }}
+                        title="Remove Celebration"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  ))
+                ) : (
+                  <div style={{ textAlign: 'center', padding: '20px 0', color: 'var(--text-muted)', fontSize: '13px' }}>
+                    No custom celebrations added yet.
+                  </div>
+                )}
+              </div>
+
+              <form onSubmit={handleAddEvent} style={{ borderTop: '1px solid var(--border-color)', paddingTop: '20px' }}>
+                <h4 style={{ fontSize: '14px', fontWeight: '600', marginBottom: '12px', color: 'white' }}>Add Celebration</h4>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                  <div>
+                    <input
+                      type="text"
+                      placeholder="e.g. Friendship Anniversary, Reunion"
+                      value={eventName}
+                      onChange={(e) => setEventName(e.target.value)}
+                      className="form-input"
+                      required
+                    />
+                  </div>
+                  <div style={{ display: 'flex', gap: '10px' }}>
+                    <input
+                      type="date"
+                      value={eventDate}
+                      onChange={(e) => setEventDate(e.target.value)}
+                      className="form-input"
+                      required
+                      style={{ flexGrow: 1 }}
+                    />
+                    <button
+                      type="submit"
+                      disabled={eventLoading}
+                      className="btn btn-primary"
+                      style={{ padding: '10px 16px' }}
+                    >
+                      Add
                     </button>
                   </div>
-                ))}
-
-              {searchQuery && searchResults.length === 0 && (
-                <div style={{ textAlign: 'center', padding: '24px 0', color: 'var(--text-muted)', fontSize: '13px' }}>
-                  No matching users found or they are already members.
                 </div>
-              )}
+              </form>
             </div>
           </div>
         ) : (

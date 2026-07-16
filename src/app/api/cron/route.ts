@@ -182,6 +182,71 @@ async function handleCron(request: Request) {
       }
     }
 
+    // ==========================================
+    // TASK C: Custom Ring Events Reminder Engine (7, 3, 1 days prior, and on the day)
+    // ==========================================
+    const { data: events, error: eError } = await supabase
+      .from('ring_events')
+      .select('id, ring_id, name, event_date, rings(name)');
+
+    if (eError) {
+      console.error('Error fetching ring events:', eError);
+    } else if (events && events.length > 0) {
+      const today = new Date();
+      const todayMidnight = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+
+      for (const event of events) {
+        const eventDate = new Date(event.event_date);
+
+        // Calculate difference in days (ignoring year, handling year wrap-around cleanly)
+        const eventThisYear = new Date(today.getFullYear(), eventDate.getMonth(), eventDate.getDate());
+        let diffTime = eventThisYear.getTime() - todayMidnight.getTime();
+        let diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24));
+
+        if (diffDays < 0) {
+          const eventNextYear = new Date(today.getFullYear() + 1, eventDate.getMonth(), eventDate.getDate());
+          diffTime = eventNextYear.getTime() - todayMidnight.getTime();
+          diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24));
+        }
+
+        const triggerDays = [7, 3, 1, 0];
+        if (triggerDays.includes(diffDays)) {
+          const ringName = (event as any).rings?.name || 'your Ring';
+
+          // Get all accepted members of this Ring
+          const { data: members } = await supabase
+            .from('ring_members')
+            .select('user_id')
+            .eq('ring_id', event.ring_id)
+            .eq('status', 'accepted');
+
+          if (members && members.length > 0) {
+            let message = '';
+            if (diffDays === 0) {
+              message = `🎉 Today is the "${event.name}" celebration for your Ring "${ringName}"!`;
+            } else if (diffDays === 1) {
+              message = `🎉 The "${event.name}" celebration for your Ring "${ringName}" is tomorrow!`;
+            } else {
+              message = `🎉 The "${event.name}" celebration for your Ring "${ringName}" is in exactly ${diffDays} days!`;
+            }
+
+            const eventReminders = members.map((member) => ({
+              user_id: member.user_id,
+              type: 'event_reminder',
+              payload: {
+                message,
+                ring_id: event.ring_id,
+                event_id: event.id,
+              },
+            }));
+
+            await supabase.from('notifications').insert(eventReminders);
+            reports.push(`Created event notifications for "${event.name}" inside ring ${ringName}.`);
+          }
+        }
+      }
+    }
+
     return NextResponse.json({ success: true, timestamp: now, reports });
   } catch (err: any) {
     console.error('Cron job error:', err);
