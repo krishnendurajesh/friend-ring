@@ -31,16 +31,16 @@ async function handleCron(request: Request) {
     const reports: string[] = [];
 
     // ==========================================
-    // TASK A: Expire Carts (1-Hour Payment Window)
+    // TASK A: Expire Carts (5-Hour Payment Window)
     // ==========================================
-    const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    const fiveHoursAgo = new Date(Date.now() - 5 * 60 * 60 * 1000).toISOString();
 
-    // Query pending_payment carts started more than 1 hour ago
+    // Query pending_payment carts started more than 5 hours ago
     const { data: expiredCarts, error: cartsError } = await supabase
       .from('carts')
       .select('id, ring_id, name:ring_id(name)')
       .eq('status', 'pending_payment')
-      .lt('payment_window_started_at', oneHourAgo);
+      .lt('payment_window_started_at', fiveHoursAgo);
 
     if (cartsError) throw cartsError;
 
@@ -100,6 +100,127 @@ async function handleCron(request: Request) {
       }
     } else {
       reports.push('No expired pending carts found.');
+    }
+
+    // ==========================================
+    // TASK D: Hourly Payment Reminder Engine
+    // ==========================================
+    // Query active pending_payment carts that are less than 5 hours old
+    const { data: activePendingCarts, error: activeCartsError } = await supabase
+      .from('carts')
+      .select('id, ring_id, payment_window_started_at, name:ring_id(name)')
+      .eq('status', 'pending_payment')
+      .gte('payment_window_started_at', fiveHoursAgo);
+
+    if (!activeCartsError && activePendingCarts) {
+      for (const cart of activePendingCarts) {
+        if (!cart.payment_window_started_at) continue;
+        const elapsedMs = Date.now() - new Date(cart.payment_window_started_at).getTime();
+        const elapsedHours = Math.floor(elapsedMs / (60 * 60 * 1000));
+
+        if (elapsedHours >= 1 && elapsedHours < 5) {
+          // Find all users in cart_contributions for this cart where amount_paid < amount_pledged
+          const { data: unpaidContributions } = await supabase
+            .from('cart_contributions')
+            .select('user_id, amount_pledged, amount_paid')
+            .eq('cart_id', cart.id);
+
+          if (unpaidContributions) {
+            for (const contrib of unpaidContributions) {
+              if (contrib.amount_paid < contrib.amount_pledged) {
+                // Check if we already sent a payment reminder for this specific hour
+                const { data: existingReminders } = await supabase
+                  .from('notifications')
+                  .select('payload')
+                  .eq('user_id', contrib.user_id)
+                  .eq('type', 'payment_reminder');
+
+                const alreadySent = existingReminders?.some((n: any) => 
+                  n.payload?.cart_id === cart.id && String(n.payload?.hour) === String(elapsedHours)
+                );
+
+                if (!alreadySent) {
+                  await supabase.from('notifications').insert({
+                    user_id: contrib.user_id,
+                    type: 'payment_reminder',
+                    payload: {
+                      message: `⚠️ Reminder: You have an unpaid contribution in "${(cart as any).name?.name || 'your Ring'}" group cart. The payment window expires in ${5 - elapsedHours} hours!`,
+                      cart_id: cart.id,
+                      ring_id: cart.ring_id,
+                      hour: String(elapsedHours)
+                    }
+                  });
+                  reports.push(`Sent payment reminder to user ${contrib.user_id} for hour ${elapsedHours} of cart ${cart.id}.`);
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+
+    // ==========================================
+    // TASK E: Cart Approval Reminder (30-Minute Window)
+    // ==========================================
+    const thirtyMinutesAgo = new Date(Date.now() - 30 * 60 * 1000).toISOString();
+
+    // Query editing carts older than 30 minutes
+    const { data: editingCarts, error: editingCartsError } = await supabase
+      .from('carts')
+      .select('id, ring_id, receiver_user_id, name:ring_id(name)')
+      .eq('status', 'editing')
+      .lt('created_at', thirtyMinutesAgo);
+
+    if (!editingCartsError && editingCarts) {
+      for (const cart of editingCarts) {
+        // Fetch all accepted members of this Ring
+        const { data: members } = await supabase
+          .from('ring_members')
+          .select('user_id')
+          .eq('ring_id', cart.ring_id)
+          .eq('status', 'accepted');
+
+        if (members) {
+          const eligibleMembers = members.filter(m => m.user_id !== cart.receiver_user_id);
+
+          for (const member of eligibleMembers) {
+            // Check if this member has already approved the cart
+            const { data: approval } = await supabase
+              .from('cart_approvals')
+              .select('approved')
+              .eq('cart_id', cart.id)
+              .eq('user_id', member.user_id)
+              .maybeSingle();
+
+            // If not approved (either record doesn't exist, or approved is false)
+            if (!approval || !approval.approved) {
+              // Check if we already sent an approval reminder for this cart to this user
+              const { data: existingReminders } = await supabase
+                .from('notifications')
+                .select('payload')
+                .eq('user_id', member.user_id)
+                .eq('type', 'cart_approval_reminder');
+
+              const alreadySent = existingReminders?.some((n: any) => 
+                n.payload?.cart_id === cart.id
+              );
+
+              if (!alreadySent) {
+                await supabase.from('notifications').insert({
+                  user_id: member.user_id,
+                  type: 'cart_approval_reminder',
+                  payload: {
+                    message: `⏳ The group cart in "${(cart as any).name?.name || 'your Ring'}" is waiting for your approval! Please review and approve it.`,
+                    cart_id: cart.id,
+                    ring_id: cart.ring_id
+                  }
+                });
+                reports.push(`Sent cart approval reminder to user ${member.user_id} for cart ${cart.id}.`);
+              }
+            }
+          }
+        }
+      }
     }
 
     // ==========================================
