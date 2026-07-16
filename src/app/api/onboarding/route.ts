@@ -12,7 +12,7 @@ export async function POST(request: Request) {
     }
 
     const body = await request.json();
-    const { birthday, address } = body;
+    const { birthday, address, gift_preferences } = body;
 
     if (!birthday || !address) {
       return NextResponse.json(
@@ -43,6 +43,7 @@ export async function POST(request: Request) {
           email,
           birthday,
           address: encryptedAddress,
+          gift_preferences: gift_preferences?.trim() || null,
         });
 
       if (error) {
@@ -55,6 +56,7 @@ export async function POST(request: Request) {
         .update({
           birthday,
           address: encryptedAddress,
+          gift_preferences: gift_preferences?.trim() || null,
         })
         .eq('id', user.id);
 

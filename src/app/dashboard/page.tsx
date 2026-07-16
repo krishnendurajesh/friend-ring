@@ -4,7 +4,7 @@ import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/utils/supabase';
-import { Plus, Gift, Check, X, ShieldAlert, ArrowRight, Bell, Users } from 'lucide-react';
+import { Plus, Gift, Check, X, ShieldAlert, ArrowRight, Bell, Users, Sparkles } from 'lucide-react';
 
 interface RingData {
   id: string;
@@ -19,8 +19,45 @@ export default function DashboardPage() {
   const [rings, setRings] = useState<RingData[]>([]);
   const [invites, setInvites] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+
+  // Gift Preferences state
+  const [giftPreferences, setGiftPreferences] = useState('');
+  const [tempPreferences, setTempPreferences] = useState('');
+  const [isEditingPreferences, setIsEditingPreferences] = useState(false);
+  const [saveLoading, setSaveLoading] = useState(false);
+
   const supabase = createClient();
   const router = useRouter();
+
+  const getWordCount = (str: string) => {
+    const cleanStr = str.trim();
+    if (!cleanStr) return 0;
+    return cleanStr.split(/\s+/).length;
+  };
+
+  const handleSavePreferences = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user) return;
+    const words = getWordCount(tempPreferences);
+    if (words < 50 || words > 100) {
+      alert(`Gift preferences must be between 50 and 100 words (currently ${words} words).`);
+      return;
+    }
+
+    setSaveLoading(true);
+    const { error } = await supabase
+      .from('profiles')
+      .update({ gift_preferences: tempPreferences.trim() })
+      .eq('id', user.id);
+
+    if (error) {
+      alert('Error saving preferences: ' + error.message);
+    } else {
+      setGiftPreferences(tempPreferences.trim());
+      setIsEditingPreferences(false);
+    }
+    setSaveLoading(false);
+  };
 
   useEffect(() => {
     const initDashboard = async () => {
@@ -31,6 +68,17 @@ export default function DashboardPage() {
       }
       setUser(user);
       await fetchData(user.id);
+
+      // Fetch user profile gift preferences
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('gift_preferences')
+        .eq('id', user.id)
+        .single();
+      
+      if (profile) {
+        setGiftPreferences(profile.gift_preferences || '');
+      }
     };
 
     initDashboard();
@@ -174,7 +222,7 @@ export default function DashboardPage() {
   return (
     <div className="container" style={{ padding: '40px 24px' }}>
       {/* Welcome Banner */}
-      <div className="flex-between" style={{ marginBottom: '40px', flexWrap: 'wrap', gap: '20px' }}>
+      <div className="flex-between" style={{ marginBottom: '32px', flexWrap: 'wrap', gap: '20px' }}>
         <div>
           <h1 style={{ fontSize: '36px', fontWeight: '800', background: 'linear-gradient(135deg, #fff 0%, var(--text-secondary) 100%)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
             Your Rings
@@ -186,6 +234,66 @@ export default function DashboardPage() {
         <Link href="/ring/new" className="btn btn-primary" style={{ padding: '12px 24px' }}>
           <Plus size={18} /> Create New Ring
         </Link>
+      </div>
+
+      {/* Gift Profile Card */}
+      <div className="card" style={{ marginBottom: '40px', background: 'linear-gradient(135deg, rgba(255,255,255,0.01) 0%, rgba(212,175,55,0.02) 100%)' }}>
+        <div style={{ maxWidth: '800px' }}>
+          <h3 style={{ fontSize: '18px', fontWeight: '700', color: 'white', display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
+            <Sparkles size={18} style={{ color: 'var(--color-gold)' }} /> My Gift Preferences
+          </h3>
+          {isEditingPreferences ? (
+            <form onSubmit={handleSavePreferences}>
+              <textarea
+                value={tempPreferences}
+                onChange={(e) => setTempPreferences(e.target.value)}
+                className="form-input"
+                style={{ minHeight: '80px', resize: 'vertical', fontSize: '14px', marginBottom: '12px', padding: '12px' }}
+                placeholder="Describe your styling tastes (e.g. gold jewellery stackers, minimalist, size 7, rose gold accents, favorite materials, or style preferences)."
+                required
+              />
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontSize: '12px', fontWeight: 'bold', color: getWordCount(tempPreferences) < 50 || getWordCount(tempPreferences) > 100 ? 'var(--color-rose)' : 'var(--color-green)' }}>
+                  {getWordCount(tempPreferences)} words (Requires 50-100 words)
+                </span>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <button
+                    type="button"
+                    onClick={() => setIsEditingPreferences(false)}
+                    className="btn btn-secondary"
+                    style={{ padding: '6px 12px', fontSize: '12px' }}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={saveLoading || getWordCount(tempPreferences) < 50 || getWordCount(tempPreferences) > 100}
+                    className="btn btn-primary"
+                    style={{ padding: '6px 12px', fontSize: '12px' }}
+                  >
+                    Save
+                  </button>
+                </div>
+              </div>
+            </form>
+          ) : (
+            <div>
+              <p style={{ color: 'var(--text-secondary)', fontSize: '14px', fontStyle: giftPreferences ? 'normal' : 'italic', lineHeight: '1.6' }}>
+                {giftPreferences ? `"${giftPreferences}"` : 'Tell your Ring members what kinds of jewelry stackers, sizes, or styling themes you love. Click Edit to fill this in!'}
+              </p>
+              <button
+                onClick={() => {
+                  setTempPreferences(giftPreferences);
+                  setIsEditingPreferences(true);
+                }}
+                className="btn btn-secondary"
+                style={{ marginTop: '14px', padding: '6px 12px', fontSize: '12px' }}
+              >
+                Edit Preferences
+              </button>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Invitations Alert */}

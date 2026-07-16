@@ -7,17 +7,31 @@ import { Calendar, MapPin, Sparkles, CheckCircle } from 'lucide-react';
 export default function OnboardingPage() {
   const [birthday, setBirthday] = useState('');
   const [address, setAddress] = useState('');
+  const [giftPreferences, setGiftPreferences] = useState('');
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const router = useRouter();
+
+  const getWordCount = (str: string) => {
+    const cleanStr = str.trim();
+    if (!cleanStr) return 0;
+    return cleanStr.split(/\s+/).length;
+  };
 
   const handleOnboarding = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     setErrorMsg('');
 
-    if (!birthday || !address) {
-      setErrorMsg('Both fields are required.');
+    if (!birthday || !address || !giftPreferences) {
+      setErrorMsg('All fields are required.');
+      setLoading(false);
+      return;
+    }
+
+    const words = getWordCount(giftPreferences);
+    if (words < 50 || words > 100) {
+      setErrorMsg(`Gift preferences must be between 50 and 100 words (currently ${words} words).`);
       setLoading(false);
       return;
     }
@@ -28,7 +42,7 @@ export default function OnboardingPage() {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ birthday, address }),
+        body: JSON.stringify({ birthday, address, gift_preferences: giftPreferences }),
       });
 
       const result = await response.json();
@@ -102,7 +116,7 @@ export default function OnboardingPage() {
           </div>
 
           {/* Address Field */}
-          <div className="form-group" style={{ marginBottom: '32px' }}>
+          <div className="form-group" style={{ marginBottom: '24px' }}>
             <label className="form-label" htmlFor="address">
               Shipping Address
             </label>
@@ -115,12 +129,38 @@ export default function OnboardingPage() {
                 value={address}
                 onChange={(e) => setAddress(e.target.value)}
                 className="form-input"
-                style={{ paddingLeft: '48px', minHeight: '100px', resize: 'vertical', paddingTop: '14px' }}
+                style={{ paddingLeft: '48px', minHeight: '80px', resize: 'vertical', paddingTop: '14px' }}
                 disabled={loading}
               />
             </div>
             <span style={{ fontSize: '11px', color: 'var(--text-muted)', display: 'block', marginTop: '6px' }}>
               🔒 Encrypted at rest. Only shared with group buyers when ordering.
+            </span>
+          </div>
+
+          {/* Gift Preferences Field */}
+          <div className="form-group" style={{ marginBottom: '32px' }}>
+            <label className="form-label" htmlFor="giftPreferences" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
+              <span>Gift Preferences (50-100 words)</span>
+              <span style={{ fontSize: '12px', fontWeight: 'bold', color: getWordCount(giftPreferences) < 50 || getWordCount(giftPreferences) > 100 ? 'var(--color-rose)' : 'var(--color-green)' }}>
+                {getWordCount(giftPreferences)} words
+              </span>
+            </label>
+            <div style={{ position: 'relative' }}>
+              <Sparkles size={18} style={{ position: 'absolute', left: '16px', top: '16px', color: 'var(--text-muted)' }} />
+              <textarea
+                id="giftPreferences"
+                required
+                placeholder="Describe your styling tastes (e.g. gold jewellery stackers, minimalist, size 7, rose gold accents, favorite materials, or style preferences)."
+                value={giftPreferences}
+                onChange={(e) => setGiftPreferences(e.target.value)}
+                className="form-input"
+                style={{ paddingLeft: '48px', minHeight: '120px', resize: 'vertical', paddingTop: '14px' }}
+                disabled={loading}
+              />
+            </div>
+            <span style={{ fontSize: '11px', color: 'var(--text-muted)', display: 'block', marginTop: '6px' }}>
+              Helps friends select the perfect jewelry stack or custom gift for you.
             </span>
           </div>
 

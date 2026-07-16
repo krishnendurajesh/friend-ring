@@ -100,7 +100,8 @@ export default function RingDetailPage({ params }: { params: Promise<{ id: strin
         profiles (
           id,
           name,
-          email
+          email,
+          gift_preferences
         )
       `)
       .eq('ring_id', ringId);
@@ -322,9 +323,10 @@ export default function RingDetailPage({ params }: { params: Promise<{ id: strin
                     background: 'rgba(255,255,255,0.02)',
                     border: '1px solid var(--border-color)',
                     borderRadius: 'var(--radius-md)',
+                    alignItems: 'flex-start',
                   }}
                 >
-                  <div>
+                  <div style={{ flexGrow: 1, marginRight: '16px' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                       <span style={{ fontWeight: '600', color: 'white', fontSize: '14px' }}>
                         {profile.name} {isSelf && '(You)'}
@@ -336,6 +338,23 @@ export default function RingDetailPage({ params }: { params: Promise<{ id: strin
                     <span style={{ display: 'block', fontSize: '12px', color: 'var(--text-secondary)' }}>
                       {profile.email}
                     </span>
+                    {profile.gift_preferences && (
+                      <div
+                        style={{
+                          marginTop: '10px',
+                          padding: '8px 12px',
+                          background: 'rgba(212,175,55,0.04)',
+                          borderLeft: '2px solid var(--color-gold)',
+                          borderRadius: '0 var(--radius-sm) var(--radius-sm) 0',
+                          fontSize: '12px',
+                          color: 'var(--text-secondary)',
+                          lineHeight: '1.4',
+                          maxWidth: '400px'
+                        }}
+                      >
+                        <strong>🎁 Gift Taste:</strong> {profile.gift_preferences}
+                      </div>
+                    )}
                   </div>
 
                   <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
