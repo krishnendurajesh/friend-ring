@@ -12,12 +12,6 @@ export default function OnboardingPage() {
   const [errorMsg, setErrorMsg] = useState('');
   const router = useRouter();
 
-  const getWordCount = (str: string) => {
-    const cleanStr = str.trim();
-    if (!cleanStr) return 0;
-    return cleanStr.split(/\s+/).length;
-  };
-
   const handleOnboarding = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
@@ -29,9 +23,9 @@ export default function OnboardingPage() {
       return;
     }
 
-    const words = getWordCount(giftPreferences);
-    if (words < 50 || words > 100) {
-      setErrorMsg(`Gift preferences must be between 50 and 100 words (currently ${words} words).`);
+    const chars = giftPreferences.trim().length;
+    if (chars < 50 || chars > 100) {
+      setErrorMsg(`Gift preferences must be between 50 and 100 characters (currently ${chars} characters).`);
       setLoading(false);
       return;
     }
@@ -141,9 +135,9 @@ export default function OnboardingPage() {
           {/* Gift Preferences Field */}
           <div className="form-group" style={{ marginBottom: '32px' }}>
             <label className="form-label" htmlFor="giftPreferences" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
-              <span>Gift Preferences (50-100 words)</span>
-              <span style={{ fontSize: '12px', fontWeight: 'bold', color: getWordCount(giftPreferences) < 50 || getWordCount(giftPreferences) > 100 ? 'var(--color-rose)' : 'var(--color-green)' }}>
-                {getWordCount(giftPreferences)} words
+              <span>Gift Preferences (50-100 characters)</span>
+              <span style={{ fontSize: '12px', fontWeight: 'bold', color: giftPreferences.trim().length < 50 || giftPreferences.trim().length > 100 ? 'var(--color-rose)' : 'var(--color-green)' }}>
+                {giftPreferences.trim().length} characters
               </span>
             </label>
             <div style={{ position: 'relative' }}>

@@ -29,18 +29,12 @@ export default function DashboardPage() {
   const supabase = createClient();
   const router = useRouter();
 
-  const getWordCount = (str: string) => {
-    const cleanStr = str.trim();
-    if (!cleanStr) return 0;
-    return cleanStr.split(/\s+/).length;
-  };
-
   const handleSavePreferences = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user) return;
-    const words = getWordCount(tempPreferences);
-    if (words < 50 || words > 100) {
-      alert(`Gift preferences must be between 50 and 100 words (currently ${words} words).`);
+    const chars = tempPreferences.trim().length;
+    if (chars < 50 || chars > 100) {
+      alert(`Gift preferences must be between 50 and 100 characters (currently ${chars} characters).`);
       return;
     }
 
@@ -253,8 +247,8 @@ export default function DashboardPage() {
                 required
               />
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span style={{ fontSize: '12px', fontWeight: 'bold', color: getWordCount(tempPreferences) < 50 || getWordCount(tempPreferences) > 100 ? 'var(--color-rose)' : 'var(--color-green)' }}>
-                  {getWordCount(tempPreferences)} words (Requires 50-100 words)
+                <span style={{ fontSize: '12px', fontWeight: 'bold', color: tempPreferences.trim().length < 50 || tempPreferences.trim().length > 100 ? 'var(--color-rose)' : 'var(--color-green)' }}>
+                  {tempPreferences.trim().length} characters (Requires 50-100 characters)
                 </span>
                 <div style={{ display: 'flex', gap: '8px' }}>
                   <button
@@ -267,7 +261,7 @@ export default function DashboardPage() {
                   </button>
                   <button
                     type="submit"
-                    disabled={saveLoading || getWordCount(tempPreferences) < 50 || getWordCount(tempPreferences) > 100}
+                    disabled={saveLoading || tempPreferences.trim().length < 50 || tempPreferences.trim().length > 100}
                     className="btn btn-primary"
                     style={{ padding: '6px 12px', fontSize: '12px' }}
                   >
