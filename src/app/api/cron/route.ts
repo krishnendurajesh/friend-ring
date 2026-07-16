@@ -103,19 +103,8 @@ async function handleCron(request: Request) {
     }
 
     // ==========================================
-    // TASK B: Birthday Reminder Engine (14 / 7 days)
+    // TASK B: Birthday Reminder Engine (7, 3, 1 days prior, and on the day)
     // ==========================================
-    // We search profiles whose birthday month-day matches exactly 14 or 7 days from now.
-    // Query profiles in JS or run a raw Postgres query if easier.
-    // In PostgreSQL, to search by day/month offset:
-    const { data: birthdayProfiles, error: birthError } = await supabase
-      .rpc('get_upcoming_birthdays'); // We can declare an RPC or use a query. 
-    
-    // Let's write a query directly checking birthdays inside PostgreSQL.
-    // Since we don't have a direct query builder for dates in month/day easily in supabase-js,
-    // we can execute a custom SQL select if we expose it, or fetch profiles and filter in JS!
-    // Since this is an MVP and profiles table is small, we can load all profiles and check in JS.
-    // However, to keep it efficient, we can load profiles where birthday is not null.
     const { data: profiles, error: pError } = await supabase
       .from('profiles')
       .select('id, name, birthday')
@@ -125,22 +114,25 @@ async function handleCron(request: Request) {
 
     if (profiles && profiles.length > 0) {
       const today = new Date();
+      const todayMidnight = new Date(today.getFullYear(), today.getMonth(), today.getDate());
       
       for (const profile of profiles) {
         const birthDate = new Date(profile.birthday);
         
-        // Calculate difference in days (ignoring year)
-        // Find next birthday
-        const nextBirthday14 = new Date(today.getFullYear(), birthDate.getMonth(), birthDate.getDate());
-        const nextBirthday7 = new Date(today.getFullYear(), birthDate.getMonth(), birthDate.getDate());
+        // Calculate difference in days (ignoring year, handling year wrap-around cleanly)
+        const bdayThisYear = new Date(today.getFullYear(), birthDate.getMonth(), birthDate.getDate());
+        let diffTime = bdayThisYear.getTime() - todayMidnight.getTime();
+        let diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24));
         
-        // Calculate days differences
-        const diffTime14 = nextBirthday14.getTime() - today.getTime();
-        const diffDays14 = Math.ceil(diffTime14 / (1000 * 60 * 60 * 24));
+        // If birthday already occurred this year, check the next year's birthday
+        if (diffDays < 0) {
+          const bdayNextYear = new Date(today.getFullYear() + 1, birthDate.getMonth(), birthDate.getDate());
+          diffTime = bdayNextYear.getTime() - todayMidnight.getTime();
+          diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24));
+        }
 
-        if (diffDays14 === 14 || diffDays14 === 7) {
-          const daysText = diffDays14 === 14 ? '14 days' : '7 days';
-
+        const triggerDays = [7, 3, 1, 0];
+        if (triggerDays.includes(diffDays)) {
           // Fetch all Rings this user is an accepted member of
           const { data: memberships } = await supabase
             .from('ring_members')
@@ -162,11 +154,20 @@ async function handleCron(request: Request) {
                 .neq('user_id', profile.id);
 
               if (otherMembers && otherMembers.length > 0) {
+                let message = '';
+                if (diffDays === 0) {
+                  message = `🎁 Today is ${profile.name}'s birthday! Start a group surprise cart in "${ringName}" to prepare a gift!`;
+                } else if (diffDays === 1) {
+                  message = `🎁 ${profile.name}'s birthday is tomorrow! Start a group surprise cart in "${ringName}" to prepare a gift!`;
+                } else {
+                  message = `🎁 ${profile.name}'s birthday is in exactly ${diffDays} days! Start a group surprise cart in "${ringName}" to prepare a gift!`;
+                }
+
                 const bdayReminders = otherMembers.map((member) => ({
                   user_id: member.user_id,
                   type: 'birthday_reminder',
                   payload: {
-                    message: `🎁 ${profile.name}'s birthday is in exactly ${daysText}! Start a group surprise cart in "${ringName}" to prepare a gift!`,
+                    message,
                     ring_id: ringId,
                     birthday_user_id: profile.id,
                   },
