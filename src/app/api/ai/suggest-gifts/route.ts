@@ -3,7 +3,7 @@ import { createServerSupabaseClient, createAdminClient } from '@/utils/supabase-
 
 // Call Gemini API with lite-to-standard fallback
 async function callGemini(apiKey: string, promptText: string) {
-  const models = ['gemini-2.5-flash-lite', 'gemini-2.5-flash'];
+  const models = ['gemini-2.0-flash-lite', 'gemini-2.0-flash', 'gemini-3.1-flash-lite', 'gemini-3.5-flash'];
   let errorMsg = '';
 
   for (const model of models) {
