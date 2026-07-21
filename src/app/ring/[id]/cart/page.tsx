@@ -365,6 +365,7 @@ export default function SharedCartPage({ params }: { params: Promise<{ id: strin
         amount_pledged,
         amount_paid,
         paid_at,
+        reimbursement_confirmed,
         profiles (
           name
         )
@@ -658,7 +659,7 @@ export default function SharedCartPage({ params }: { params: Promise<{ id: strin
 
       if (cartError) throw cartError;
 
-      // 2. Mark Host's contribution as fully paid (upfront checkout)
+      // 2. Mark Host's contribution as fully paid and confirmed (upfront checkout)
       const { error: hostContribError } = await supabase
         .from('cart_contributions')
         .upsert({
@@ -667,6 +668,7 @@ export default function SharedCartPage({ params }: { params: Promise<{ id: strin
           amount_pledged: totalCost,
           amount_paid: totalCost,
           paid_at: now,
+          reimbursement_confirmed: true,
         });
 
       if (hostContribError) throw hostContribError;
@@ -682,6 +684,7 @@ export default function SharedCartPage({ params }: { params: Promise<{ id: strin
             amount_pledged: equalShare,
             amount_paid: 0.00,
             paid_at: null,
+            reimbursement_confirmed: false,
           });
 
         // 4. Send real-time reimbursement notification to the member
@@ -737,15 +740,78 @@ export default function SharedCartPage({ params }: { params: Promise<{ id: strin
           amount_pledged: shareAmount,
           amount_paid: shareAmount,
           paid_at: new Date().toISOString(),
+          reimbursement_confirmed: false,
         });
 
       if (error) throw error;
 
-      alert(`Successfully reimbursed the Host $${shareAmount.toFixed(2)}!`);
+      // Notify the Host to verify the payment
+      if (cart.host_user_id) {
+        await supabase
+          .from('notifications')
+          .insert({
+            user_id: cart.host_user_id,
+            type: 'reimbursement_verification_request',
+            payload: {
+              message: `💰 ${members.find(m => m.user_id === user.id)?.profiles?.name || 'A member'} has marked their share of ₹${shareAmount.toLocaleString()} as paid. Please confirm it in the app.`,
+              ring_id: ringId,
+              cart_id: cart.id,
+              action_url: `/ring/${ringId}/cart`,
+            }
+          });
+      }
+
+      alert(`Successfully reimbursed the Host ₹${shareAmount.toLocaleString()}! Verification request sent to Host.`);
       await loadRingData(user.id);
     } catch (err: any) {
       console.error(err);
       alert('Reimbursement failed: ' + err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleConfirmReimbursement = async (memberId: string) => {
+    if (!cart?.id) return;
+    setLoading(true);
+    try {
+      const memberContrib = contributions.find((c) => c.user_id === memberId);
+      const totalCost = cartItems.reduce((sum, item) => sum + item.quantity * item.products.price, 0);
+      const eligibleMembers = members.filter((m) => m.user_id !== cart.receiver_user_id);
+      const equalShare = eligibleMembers.length > 0 ? totalCost / eligibleMembers.length : 0;
+      const shareAmount = memberContrib ? parseFloat(memberContrib.amount_pledged) : equalShare;
+
+      const { error } = await supabase
+        .from('cart_contributions')
+        .upsert({
+          cart_id: cart.id,
+          user_id: memberId,
+          amount_pledged: shareAmount,
+          amount_paid: shareAmount,
+          paid_at: memberContrib?.paid_at || new Date().toISOString(),
+          reimbursement_confirmed: true,
+        });
+
+      if (error) throw error;
+
+      // Send confirmation notification to the member
+      await supabase
+        .from('notifications')
+        .insert({
+          user_id: memberId,
+          type: 'reimbursement_confirmed',
+          payload: {
+            message: `✅ Your reimbursement of ₹${shareAmount.toLocaleString()} was confirmed by the Host!`,
+            ring_id: ringId,
+            cart_id: cart.id,
+          }
+        });
+
+      alert('Reimbursement payment confirmed successfully!');
+      await loadRingData(user?.id);
+    } catch (err: any) {
+      console.error(err);
+      alert('Failed to confirm payment: ' + err.message);
     } finally {
       setLoading(false);
     }
@@ -876,15 +942,50 @@ export default function SharedCartPage({ params }: { params: Promise<{ id: strin
 
           <div style={{ maxWidth: '400px', margin: '0 auto 32px', background: 'rgba(0,0,0,0.2)', borderRadius: 'var(--radius-md)', padding: '20px', border: '1px solid var(--border-color)', textAlign: 'left' }}>
             <h4 style={{ fontSize: '14px', fontWeight: '700', color: 'white', marginBottom: '12px' }}>Contributors Summary</h4>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-              {contributions.map((c) => (
-                <div key={c.user_id} className="flex-between" style={{ fontSize: '13px' }}>
-                  <span style={{ color: 'var(--text-secondary)' }}>{c.profiles?.name || 'Member'}</span>
-                  <span style={{ fontWeight: '600', color: parseFloat(c.amount_paid) > 0 ? 'var(--color-green)' : 'var(--color-rose)' }}>
-                    {parseFloat(c.amount_paid) > 0 ? `Paid ₹${parseFloat(c.amount_paid).toLocaleString()}` : `Unpaid (Owes ₹${parseFloat(c.amount_pledged).toLocaleString()})`}
-                  </span>
-                </div>
-              ))}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              {contributions.map((c) => {
+                const isHostContrib = c.user_id === cart.host_user_id;
+                const isConfirmed = c.reimbursement_confirmed === true;
+                const hasPaid = parseFloat(c.amount_paid) > 0;
+
+                let statusText = '';
+                let statusColor = 'var(--text-secondary)';
+                if (isHostContrib) {
+                  statusText = `Host Paid ₹${parseFloat(c.amount_paid).toLocaleString()}`;
+                  statusColor = 'var(--color-gold)';
+                } else if (isConfirmed) {
+                  statusText = `Confirmed (Paid ₹${parseFloat(c.amount_paid).toLocaleString()})`;
+                  statusColor = 'var(--color-green)';
+                } else if (hasPaid) {
+                  statusText = `Paid (Awaiting Host Confirmation) - ₹${parseFloat(c.amount_paid).toLocaleString()}`;
+                  statusColor = '#E2B13C';
+                } else {
+                  statusText = `Unpaid (Owes ₹${parseFloat(c.amount_pledged).toLocaleString()})`;
+                  statusColor = 'var(--color-rose)';
+                }
+
+                const showConfirmButton = user && cart.host_user_id && user.id === cart.host_user_id && !isHostContrib && !isConfirmed;
+
+                return (
+                  <div key={c.user_id} style={{ display: 'flex', flexDirection: 'column', gap: '8px', paddingBottom: '8px', borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                    <div className="flex-between" style={{ fontSize: '13px' }}>
+                      <span style={{ color: 'var(--text-secondary)' }}>{c.profiles?.name || 'Member'}</span>
+                      <span style={{ fontWeight: '600', color: statusColor }}>
+                        {statusText}
+                      </span>
+                    </div>
+                    {showConfirmButton && (
+                      <button
+                        onClick={() => handleConfirmReimbursement(c.user_id)}
+                        className="btn btn-primary"
+                        style={{ padding: '6px 12px', fontSize: '11px', alignSelf: 'flex-end', marginTop: '4px' }}
+                      >
+                        Confirm Payment
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           </div>
 
@@ -894,13 +995,18 @@ export default function SharedCartPage({ params }: { params: Promise<{ id: strin
             const equalShare = eligibleMembers.length > 0 ? totalCost / eligibleMembers.length : 0;
             const myContribution = contributions.find((c) => c.user_id === user.id);
             const hasReimbursed = myContribution && parseFloat(myContribution.amount_paid) >= parseFloat(myContribution.amount_pledged) && parseFloat(myContribution.amount_paid) > 0;
+            const isConfirmed = myContribution && myContribution.reimbursement_confirmed === true;
 
             return (
               <div style={{ maxWidth: '400px', margin: '0 auto 32px', background: 'rgba(212,175,55,0.03)', border: '1px solid rgba(212,175,55,0.15)', borderRadius: 'var(--radius-md)', padding: '20px', textAlign: 'center' }}>
                 <h4 style={{ fontSize: '15px', fontWeight: '700', color: 'white', marginBottom: '8px' }}>Reimburse the Host</h4>
-                {hasReimbursed ? (
+                {isConfirmed ? (
                   <p style={{ color: 'var(--color-green)', fontSize: '13px', fontWeight: 600, margin: 0 }}>
-                    ✓ Thank you! You have successfully reimbursed the Host your share of ₹{equalShare.toLocaleString()}.
+                    ✓ Confirmed! Your reimbursement of ₹{equalShare.toLocaleString()} has been verified by the Host.
+                  </p>
+                ) : hasReimbursed ? (
+                  <p style={{ color: '#E2B13C', fontSize: '13px', fontWeight: 600, margin: 0 }}>
+                    ⏳ Awaiting Host Confirmation. You marked your share of ₹{equalShare.toLocaleString()} as paid. We will notify you when the Host confirms.
                   </p>
                 ) : isReimbursementExpired ? (
                   <p style={{ color: 'var(--color-rose)', fontSize: '13px', fontWeight: 600, margin: 0 }}>

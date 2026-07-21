@@ -95,34 +95,35 @@ async function handleCron(request: Request) {
     // ==========================================
     const { data: completedCarts, error: completedCartsError } = await supabase
       .from('carts')
-      .select('id, ring_id, checked_out_at, name:ring_id(name)')
+      .select('id, ring_id, checked_out_at, host_user_id, name:ring_id(name)')
       .eq('status', 'completed')
       .lt('checked_out_at', oneHourAgo);
 
     if (!completedCartsError && completedCarts && completedCarts.length > 0) {
       for (const cart of completedCarts) {
-        // Query unpaid contributions
+        // Query unpaid/unconfirmed contributions
         const { data: unpaidContribs } = await supabase
           .from('cart_contributions')
-          .select('user_id, amount_pledged, amount_paid')
+          .select('user_id, amount_pledged, amount_paid, reimbursement_confirmed')
           .eq('cart_id', cart.id);
 
         if (unpaidContribs) {
           for (const contrib of unpaidContribs) {
-            // Check if they haven't fully paid their share
-            if (parseFloat(contrib.amount_paid || '0') < parseFloat(contrib.amount_pledged || '0')) {
-              // Check if reminder was already sent
+            // Check if they haven't been confirmed yet and are not the host
+            if (contrib.reimbursement_confirmed !== true && contrib.user_id !== cart.host_user_id) {
+              // Check if reminder was already sent in the last 1 hour
               const { data: existingReminders } = await supabase
                 .from('notifications')
-                .select('payload')
+                .select('created_at, payload')
                 .eq('user_id', contrib.user_id)
                 .eq('type', 'reimbursement_reminder');
 
-              const alreadySent = existingReminders?.some((n: any) => 
-                n.payload?.cart_id === cart.id
+              const sentInLastHour = existingReminders?.some((n: any) => 
+                n.payload?.cart_id === cart.id &&
+                (new Date(n.created_at).getTime() > Date.now() - 60 * 60 * 1000)
               );
 
-              if (!alreadySent) {
+              if (!sentInLastHour) {
                 await supabase.from('notifications').insert({
                   user_id: contrib.user_id,
                   type: 'reimbursement_reminder',
