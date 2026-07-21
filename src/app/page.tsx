@@ -126,7 +126,7 @@ export default function CatalogPage() {
         .from('carts')
         .select('id, status, receiver_user_id')
         .eq('ring_id', ringId)
-        .in('status', ['editing', 'pending_payment'])
+        .in('status', ['editing', 'locked', 'ready_for_payment', 'pending_payment'])
         .order('created_at', { ascending: false })
         .limit(1)
         .single();

@@ -4,6 +4,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { createClient } from '@/utils/supabase';
 import { Bell, Check, X, Inbox } from 'lucide-react';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 
 export interface Notification {
   id: string;
@@ -27,6 +28,51 @@ export default function NotificationBell({ userId }: { userId: string }) {
   const dropdownRef = useRef<HTMLDivElement>(null);
   const supabase = createClient();
   const router = useRouter();
+
+  const renderNotificationMessage = (n: Notification) => {
+    const msg = n.payload.message || '';
+    if (!msg.includes('{notification link}')) {
+      return <span>{msg}</span>;
+    }
+    const parts = msg.split('{notification link}');
+    const actionUrl = n.payload.action_url || (n.payload.ring_id ? `/ring/${n.payload.ring_id}/cart` : '#');
+    
+    // Check if the link has expired (created_at > 1 hour)
+    const isExpired = new Date().getTime() - new Date(n.created_at).getTime() > 60 * 60 * 1000;
+
+    if (isExpired) {
+      return (
+        <span>
+          {parts[0]}
+          <span style={{ color: 'var(--text-muted)', textDecoration: 'line-through', cursor: 'not-allowed' }} title="Payment link expired">
+            payment link (Expired)
+          </span>
+          {parts[1]}
+        </span>
+      );
+    }
+
+    return (
+      <span>
+        {parts[0]}
+        <Link
+          href={actionUrl}
+          onClick={() => {
+            markAsRead(n.id);
+            setIsOpen(false);
+          }}
+          style={{
+            color: 'var(--color-gold)',
+            textDecoration: 'underline',
+            fontWeight: 600,
+          }}
+        >
+          payment link
+        </Link>
+        {parts[1]}
+      </span>
+    );
+  };
 
   useEffect(() => {
     fetchNotifications();
@@ -243,7 +289,7 @@ export default function NotificationBell({ userId }: { userId: string }) {
                   }}
                 >
                   <p style={{ fontSize: '13px', color: 'var(--text-primary)', marginBottom: '8px' }}>
-                    {n.payload.message}
+                    {renderNotificationMessage(n)}
                   </p>
                   
                   {n.type === 'ring_invite' && !n.read && (

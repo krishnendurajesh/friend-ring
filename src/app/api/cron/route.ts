@@ -31,6 +31,116 @@ async function handleCron(request: Request) {
     const reports: string[] = [];
 
     // ==========================================
+    // TASK A2: Expire Locked Carts (1-Hour Lock Timer)
+    // ==========================================
+    const oneHourAgo = new Date(Date.now() - 1 * 60 * 60 * 1000).toISOString();
+
+    // Query locked carts that have been locked for more than 1 hour
+    const { data: expiredLockedCarts, error: lockedCartsError } = await supabase
+      .from('carts')
+      .select('id, ring_id, name:ring_id(name)')
+      .eq('status', 'locked')
+      .lt('locked_at', oneHourAgo);
+
+    if (!lockedCartsError && expiredLockedCarts && expiredLockedCarts.length > 0) {
+      for (const cart of expiredLockedCarts) {
+        // 1. Revert cart status to editing and clear locked_at
+        const { error: updateError } = await supabase
+          .from('carts')
+          .update({
+            status: 'editing',
+            locked_at: null,
+          })
+          .eq('id', cart.id);
+
+        if (updateError) {
+          console.error(`Failed to unlock cart ${cart.id}:`, updateError);
+          continue;
+        }
+
+        // 2. Reset approvals to false
+        await supabase
+          .from('cart_approvals')
+          .update({ approved: false })
+          .eq('cart_id', cart.id);
+
+        // 3. Notify all accepted ring members
+        const { data: members } = await supabase
+          .from('ring_members')
+          .select('user_id')
+          .eq('ring_id', cart.ring_id)
+          .eq('status', 'accepted');
+
+        if (members && members.length > 0) {
+          const notificationsToInsert = members.map((m) => ({
+            user_id: m.user_id,
+            type: 'cart_lock_expired',
+            payload: {
+              message: `The 1-hour approval lock for the group cart in "${(cart as any).name?.name || 'your Ring'}" has expired. The cart has unlocked and reverted to editing.`,
+              ring_id: cart.ring_id,
+            },
+          }));
+
+          await supabase.from('notifications').insert(notificationsToInsert);
+        }
+
+        reports.push(`Locked cart ${cart.id} reverted to editing due to timeout.`);
+      }
+    } else {
+      reports.push('No expired locked carts found.');
+    }
+
+    // ==========================================
+    // TASK F: Completed Cart Reimbursement Reminder (1-Hour Timer)
+    // ==========================================
+    const { data: completedCarts, error: completedCartsError } = await supabase
+      .from('carts')
+      .select('id, ring_id, checked_out_at, name:ring_id(name)')
+      .eq('status', 'completed')
+      .lt('checked_out_at', oneHourAgo);
+
+    if (!completedCartsError && completedCarts && completedCarts.length > 0) {
+      for (const cart of completedCarts) {
+        // Query unpaid contributions
+        const { data: unpaidContribs } = await supabase
+          .from('cart_contributions')
+          .select('user_id, amount_pledged, amount_paid')
+          .eq('cart_id', cart.id);
+
+        if (unpaidContribs) {
+          for (const contrib of unpaidContribs) {
+            // Check if they haven't fully paid their share
+            if (parseFloat(contrib.amount_paid || '0') < parseFloat(contrib.amount_pledged || '0')) {
+              // Check if reminder was already sent
+              const { data: existingReminders } = await supabase
+                .from('notifications')
+                .select('payload')
+                .eq('user_id', contrib.user_id)
+                .eq('type', 'reimbursement_reminder');
+
+              const alreadySent = existingReminders?.some((n: any) => 
+                n.payload?.cart_id === cart.id
+              );
+
+              if (!alreadySent) {
+                await supabase.from('notifications').insert({
+                  user_id: contrib.user_id,
+                  type: 'reimbursement_reminder',
+                  payload: {
+                    message: `⚠️ Follow-up Reminder: You have an unpaid reimbursement of $${parseFloat(contrib.amount_pledged).toFixed(2)} for the order in "${(cart as any).name?.name || 'your Ring'}". Please pay your share.`,
+                    cart_id: cart.id,
+                    ring_id: cart.ring_id
+                  }
+                });
+                reports.push(`Sent reimbursement reminder to user ${contrib.user_id} for cart ${cart.id}.`);
+              }
+            }
+          }
+        }
+      }
+    }
+
+    // ==========================================
     // TASK A: Expire Carts (5-Hour Payment Window)
     // ==========================================
     const fiveHoursAgo = new Date(Date.now() - 5 * 60 * 60 * 1000).toISOString();

@@ -41,6 +41,41 @@ interface CartItem {
   };
 }
 
+const Countdown = ({ targetTime, onComplete }: { targetTime: string; onComplete?: () => void }) => {
+  const [timeLeft, setTimeLeft] = useState<number>(0);
+
+  useEffect(() => {
+    const calculateTimeLeft = () => {
+      const difference = new Date(targetTime).getTime() + 60 * 60 * 1000 - Date.now();
+      return Math.max(0, difference);
+    };
+
+    setTimeLeft(calculateTimeLeft());
+
+    const timer = setInterval(() => {
+      const left = calculateTimeLeft();
+      setTimeLeft(left);
+      if (left <= 0) {
+        clearInterval(timer);
+        if (onComplete) onComplete();
+      }
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, [targetTime, onComplete]);
+
+  if (timeLeft <= 0) return <span style={{ color: 'var(--color-rose)' }}>Expired</span>;
+
+  const minutes = Math.floor((timeLeft / 1000 / 60) % 60);
+  const seconds = Math.floor((timeLeft / 1000) % 60);
+
+  return (
+    <span style={{ fontWeight: 700, color: 'var(--color-gold)' }}>
+      {minutes.toString().padStart(2, '0')}:{seconds.toString().padStart(2, '0')}
+    </span>
+  );
+};
+
 export default function SharedCartPage({ params }: { params: Promise<{ id: string }> }) {
   const { id: ringId } = use(params);
   const [user, setUser] = useState<any>(null);
@@ -50,6 +85,7 @@ export default function SharedCartPage({ params }: { params: Promise<{ id: strin
   const [cartItems, setCartItems] = useState<CartItem[]>([]);
   const [approvals, setApprovals] = useState<any[]>([]);
   const [contributions, setContributions] = useState<any[]>([]);
+  const [isReimbursementExpired, setIsReimbursementExpired] = useState(false);
   
   // Onboarding/Wishlist receiver states
   const [wishlistItems, setWishlistItems] = useState<any[]>([]);
@@ -113,12 +149,9 @@ export default function SharedCartPage({ params }: { params: Promise<{ id: strin
           const updatedCart = payload.new;
           setCart(updatedCart);
           
-          // If status transitioned, refresh contributions/approvals
-          if (updatedCart.status === 'pending_payment') {
-            await fetchContributions(updatedCart.id);
-          } else if (updatedCart.status === 'editing') {
-            await fetchApprovals(updatedCart.id);
-          }
+          await fetchCartItems(updatedCart.id);
+          await fetchApprovals(updatedCart.id);
+          await fetchContributions(updatedCart.id);
           router.refresh();
         }
       )
@@ -198,7 +231,7 @@ export default function SharedCartPage({ params }: { params: Promise<{ id: strin
         .from('carts')
         .select('*')
         .eq('ring_id', ringId)
-        .in('status', ['editing', 'pending_payment', 'completed'])
+        .in('status', ['editing', 'locked', 'ready_for_payment', 'pending_payment', 'completed'])
         .order('created_at', { ascending: false })
         .limit(1);
 
@@ -211,7 +244,43 @@ export default function SharedCartPage({ params }: { params: Promise<{ id: strin
         return;
       }
 
-      const activeCart = cartData[0];
+      let activeCart = cartData[0];
+
+      // Check for lock expiration (1 hour)
+      if (activeCart.status === 'locked' && activeCart.locked_at) {
+        const lockedTime = new Date(activeCart.locked_at).getTime();
+        if (Date.now() - lockedTime > 60 * 60 * 1000) {
+          // Revert cart to editing state
+          await supabase
+            .from('carts')
+            .update({ status: 'editing', locked_at: null })
+            .eq('id', activeCart.id);
+          
+          await supabase
+            .from('cart_approvals')
+            .update({ approved: false })
+            .eq('cart_id', activeCart.id);
+
+          // Fetch the refreshed cart
+          const { data: refreshedCart } = await supabase
+            .from('carts')
+            .select('*')
+            .eq('id', activeCart.id)
+            .single();
+          if (refreshedCart) {
+            activeCart = refreshedCart;
+          }
+        }
+      }
+
+      // Check if reimbursement is expired (1 hour)
+      if (activeCart.status === 'completed' && activeCart.checked_out_at) {
+        const checkedOutTime = new Date(activeCart.checked_out_at).getTime();
+        setIsReimbursementExpired(Date.now() - checkedOutTime > 60 * 60 * 1000);
+      } else {
+        setIsReimbursementExpired(false);
+      }
+
       setCart(activeCart);
 
       // Load items, approvals, contributions
@@ -220,7 +289,7 @@ export default function SharedCartPage({ params }: { params: Promise<{ id: strin
       await fetchContributions(activeCart.id);
 
       // Set self approval check
-      if (activeCart.status === 'editing') {
+      if (activeCart.status === 'editing' || activeCart.status === 'locked') {
         const myApp = approvals.find((a) => a.user_id === currentUserId);
         setIsApprovedBySelf(!!myApp?.approved);
       }
@@ -527,6 +596,161 @@ export default function SharedCartPage({ params }: { params: Promise<{ id: strin
     }
   };
 
+  const handleLockCart = async () => {
+    if (!cart?.id) return;
+    setLoading(true);
+    try {
+      const { error } = await supabase
+        .from('carts')
+        .update({
+          status: 'locked',
+          locked_at: new Date().toISOString(),
+        })
+        .eq('id', cart.id);
+
+      if (error) {
+        alert('Failed to lock cart: ' + error.message);
+      } else {
+        await loadRingData(user.id);
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleApproveCartAndShare = async () => {
+    if (!cart?.id || !user?.id) return;
+    const { error } = await supabase
+      .from('cart_approvals')
+      .upsert({
+        cart_id: cart.id,
+        user_id: user.id,
+        approved: true,
+      });
+
+    if (error) {
+      alert('Error approving cart and share: ' + error.message);
+    } else {
+      await loadRingData(user.id);
+    }
+  };
+
+  const handleHostCheckout = async () => {
+    if (!cart?.id || !user?.id) return;
+    setLoading(true);
+    try {
+      const totalCost = cartItems.reduce((sum, item) => sum + item.quantity * item.products.price, 0);
+      const eligibleMembers = members.filter((m) => m.user_id !== cart.receiver_user_id);
+      const equalShare = eligibleMembers.length > 0 ? totalCost / eligibleMembers.length : 0;
+      
+      const now = new Date().toISOString();
+
+      // 1. Mark cart as completed and set checked_out_at
+      const { error: cartError } = await supabase
+        .from('carts')
+        .update({
+          status: 'completed',
+          checked_out_at: now,
+        })
+        .eq('id', cart.id);
+
+      if (cartError) throw cartError;
+
+      // 2. Mark Host's contribution as fully paid (upfront checkout)
+      const { error: hostContribError } = await supabase
+        .from('cart_contributions')
+        .upsert({
+          cart_id: cart.id,
+          user_id: user.id,
+          amount_pledged: totalCost,
+          amount_paid: totalCost,
+          paid_at: now,
+        });
+
+      if (hostContribError) throw hostContribError;
+
+      // 3. Initialize non-host contributions as unpaid pledges of their equal share
+      const nonHostMembers = eligibleMembers.filter((m) => m.user_id !== user.id);
+      for (const member of nonHostMembers) {
+        await supabase
+          .from('cart_contributions')
+          .upsert({
+            cart_id: cart.id,
+            user_id: member.user_id,
+            amount_pledged: equalShare,
+            amount_paid: 0.00,
+            paid_at: null,
+          });
+
+        // 4. Send real-time reimbursement notification to the member
+        await supabase
+          .from('notifications')
+          .insert({
+            user_id: member.user_id,
+            type: 'reimbursement_request',
+            payload: {
+              message: `Host has paid for the order! Please reimburse your equal share of $${equalShare.toFixed(2)} here: {notification link}`,
+              ring_id: ringId,
+              action_url: `/ring/${ringId}/cart`,
+            },
+          });
+      }
+
+      alert('Order placed successfully! 100% upfront check out completed. Reimbursement requests dispatched to all non-host members.');
+      await loadRingData(user.id);
+    } catch (err: any) {
+      console.error(err);
+      alert('Checkout failed: ' + err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleReimburseHost = async () => {
+    if (!cart?.id || !user?.id) return;
+    
+    // Safety check for 1-hour expiration
+    if (cart.checked_out_at) {
+      const checkedOutTime = new Date(cart.checked_out_at).getTime();
+      if (Date.now() - checkedOutTime > 60 * 60 * 1000) {
+        alert('Reimbursement failed: The 1-hour payment window has expired.');
+        setIsReimbursementExpired(true);
+        return;
+      }
+    }
+
+    setLoading(true);
+    try {
+      const myContribution = contributions.find((c) => c.user_id === user.id);
+      const totalCost = cartItems.reduce((sum, item) => sum + item.quantity * item.products.price, 0);
+      const eligibleMembers = members.filter((m) => m.user_id !== cart.receiver_user_id);
+      const equalShare = eligibleMembers.length > 0 ? totalCost / eligibleMembers.length : 0;
+      const shareAmount = myContribution ? parseFloat(myContribution.amount_pledged) : equalShare;
+
+      const { error } = await supabase
+        .from('cart_contributions')
+        .upsert({
+          cart_id: cart.id,
+          user_id: user.id,
+          amount_pledged: shareAmount,
+          amount_paid: shareAmount,
+          paid_at: new Date().toISOString(),
+        });
+
+      if (error) throw error;
+
+      alert(`Successfully reimbursed the Host $${shareAmount.toFixed(2)}!`);
+      await loadRingData(user.id);
+    } catch (err: any) {
+      console.error(err);
+      alert('Reimbursement failed: ' + err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleStartNewGift = async () => {
     setLoading(true);
     const { data, error } = await supabase
@@ -646,19 +870,62 @@ export default function SharedCartPage({ params }: { params: Promise<{ id: strin
             The group gift has been fully funded and the order has been submitted. Shipping details will be sent to the recipient.
           </p>
 
+          <p style={{ color: 'var(--text-muted)', fontSize: '13px', marginBottom: '24px' }}>
+            Order Session Host: <strong style={{ color: 'white' }}>{members.find(m => m.user_id === cart.host_user_id)?.profiles?.name || 'Assigned Host'}</strong>
+          </p>
+
           <div style={{ maxWidth: '400px', margin: '0 auto 32px', background: 'rgba(0,0,0,0.2)', borderRadius: 'var(--radius-md)', padding: '20px', border: '1px solid var(--border-color)', textAlign: 'left' }}>
             <h4 style={{ fontSize: '14px', fontWeight: '700', color: 'white', marginBottom: '12px' }}>Contributors Summary</h4>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
               {contributions.map((c) => (
                 <div key={c.user_id} className="flex-between" style={{ fontSize: '13px' }}>
                   <span style={{ color: 'var(--text-secondary)' }}>{c.profiles?.name || 'Member'}</span>
-                  <span style={{ fontWeight: '600', color: 'var(--color-green)' }}>Paid ₹{parseFloat(c.amount_paid).toLocaleString()}</span>
+                  <span style={{ fontWeight: '600', color: parseFloat(c.amount_paid) > 0 ? 'var(--color-green)' : 'var(--color-rose)' }}>
+                    {parseFloat(c.amount_paid) > 0 ? `Paid ₹${parseFloat(c.amount_paid).toLocaleString()}` : `Unpaid (Owes ₹${parseFloat(c.amount_pledged).toLocaleString()})`}
+                  </span>
                 </div>
               ))}
             </div>
           </div>
 
-          <button onClick={handleStartNewGift} className="btn btn-primary">
+          {/* Non-host reimbursement control */}
+          {user && cart.host_user_id && user.id !== cart.host_user_id && (() => {
+            const eligibleMembers = members.filter((m) => m.user_id !== cart.receiver_user_id);
+            const equalShare = eligibleMembers.length > 0 ? totalCost / eligibleMembers.length : 0;
+            const myContribution = contributions.find((c) => c.user_id === user.id);
+            const hasReimbursed = myContribution && parseFloat(myContribution.amount_paid) >= parseFloat(myContribution.amount_pledged) && parseFloat(myContribution.amount_paid) > 0;
+
+            return (
+              <div style={{ maxWidth: '400px', margin: '0 auto 32px', background: 'rgba(212,175,55,0.03)', border: '1px solid rgba(212,175,55,0.15)', borderRadius: 'var(--radius-md)', padding: '20px', textAlign: 'center' }}>
+                <h4 style={{ fontSize: '15px', fontWeight: '700', color: 'white', marginBottom: '8px' }}>Reimburse the Host</h4>
+                {hasReimbursed ? (
+                  <p style={{ color: 'var(--color-green)', fontSize: '13px', fontWeight: 600, margin: 0 }}>
+                    ✓ Thank you! You have successfully reimbursed the Host your share of ₹{equalShare.toLocaleString()}.
+                  </p>
+                ) : isReimbursementExpired ? (
+                  <p style={{ color: 'var(--color-rose)', fontSize: '13px', fontWeight: 600, margin: 0 }}>
+                    ❌ Reimbursement Window Closed. The 1-hour window to reimburse the Host has expired.
+                  </p>
+                ) : (
+                  <div>
+                    <p style={{ color: 'var(--text-secondary)', fontSize: '13px', marginBottom: '16px' }}>
+                      The Host paid 100% upfront. Please reimburse your equal share of <strong>₹{equalShare.toLocaleString()}</strong>.
+                    </p>
+                    {cart.checked_out_at && (
+                      <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '16px' }}>
+                        Time remaining to reimburse: <Countdown targetTime={cart.checked_out_at} onComplete={() => setIsReimbursementExpired(true)} />
+                      </div>
+                    )}
+                    <button onClick={handleReimburseHost} className="btn btn-primary" style={{ width: '100%' }}>
+                      Reimburse Host ₹{equalShare.toLocaleString()}
+                    </button>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
+
+          <button onClick={handleStartNewGift} className="btn btn-secondary">
             Start a New Group Gift
           </button>
         </div>
@@ -775,9 +1042,7 @@ export default function SharedCartPage({ params }: { params: Promise<{ id: strin
                   </div>
                 </div>
               )}
-            </div>
-
-            {/* Editing Phase: Receiver and Approvals */}
+            </div>            {/* Editing Phase: Receiver and AI Suggestions Panel */}
             {cart.status === 'editing' && (
               <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '30px' }}>
                 
@@ -949,62 +1214,197 @@ export default function SharedCartPage({ params }: { params: Promise<{ id: strin
                   </div>
                 )}
 
-                {/* Approval State Card */}
+                {/* Lock Action Card */}
                 <div className="card">
                   <h3 style={{ fontSize: '20px', fontWeight: '700', color: 'white', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '10px' }}>
-                    <CheckSquare size={20} style={{ color: 'var(--color-gold)' }} /> Cart Approvals
+                    <Lock size={20} style={{ color: 'var(--color-gold)' }} /> Request Consensus Approval
                   </h3>
-
                   <p style={{ color: 'var(--text-secondary)', fontSize: '13px', marginBottom: '24px' }}>
-                    Every accepted member of this Ring must check "Approve" to lock the cart and unlock split payments. Editing items resets all approvals.
+                    Ready to lock the cart? Transitioning to locked starts a 1-hour countdown for all members to approve the items and their equal share.
                   </p>
-
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', marginBottom: '32px' }}>
-                    {members
-                      .filter((m) => m.user_id !== cart.receiver_user_id) // Exclude the surprise receiver since they can't see the cart
-                      .map((member) => {
-                        const approvedObj = approvals.find((a) => a.user_id === member.user_id);
-                        const isApproved = !!approvedObj?.approved;
-
-                        return (
-                          <div
-                            key={member.user_id}
-                            className="flex-between"
-                            style={{
-                              padding: '10px 16px',
-                              background: 'rgba(255,255,255,0.02)',
-                              border: '1px solid var(--border-color)',
-                              borderRadius: 'var(--radius-sm)',
-                            }}
-                          >
-                            <span style={{ fontSize: '13px', color: 'var(--text-primary)', fontWeight: 500 }}>
-                              {member.profiles?.name} {member.user_id === user?.id && '(You)'}
-                            </span>
-                            <span
-                              className={`badge ${isApproved ? 'badge-green' : 'badge-rose'}`}
-                              style={{ fontSize: '10px', padding: '3px 8px' }}
-                            >
-                              {isApproved ? 'Approved' : 'Waiting'}
-                            </span>
-                          </div>
-                        );
-                      })}
-                  </div>
-
                   <button
-                    onClick={handleApprovalToggle}
-                    className={`btn ${isApprovedBySelf ? 'btn-secondary' : 'btn-primary'}`}
+                    onClick={handleLockCart}
+                    className="btn btn-primary"
                     style={{ width: '100%', padding: '14px' }}
                     disabled={cartItems.length === 0}
                   >
-                    {isApprovedBySelf ? 'Withdraw My Approval' : 'Approve Shared Cart'}
+                    Lock Cart & Request Approval
                   </button>
                 </div>
 
               </div>
             )}
 
-            {/* Payment Phase: Split Payments */}
+            {/* Lock Phase: Consensus Approvals with Countdown */}
+            {cart.status === 'locked' && (
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '30px' }}>
+                <div className="card">
+                  <h3 style={{ fontSize: '20px', fontWeight: '700', color: 'white', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    <CheckSquare size={20} style={{ color: 'var(--color-gold)' }} /> Member Approvals (Consensus)
+                  </h3>
+
+                  {cart.locked_at && (
+                    <div style={{ padding: '12px 16px', background: 'rgba(212,175,55,0.05)', border: '1px solid rgba(212,175,55,0.2)', borderRadius: 'var(--radius-sm)', marginBottom: '20px', fontSize: '13px', color: 'var(--text-primary)' }}>
+                      ⏳ Cart locked! Time remaining for all members to approve: <Countdown targetTime={cart.locked_at} onComplete={() => loadRingData(user.id)} />
+                    </div>
+                  )}
+
+                  {(() => {
+                    const eligibleMembers = members.filter((m) => m.user_id !== cart.receiver_user_id);
+                    const equalShare = eligibleMembers.length > 0 ? totalCost / eligibleMembers.length : 0;
+                    const approvedObj = approvals.find((a) => a.user_id === user?.id);
+                    const hasApproved = !!approvedObj?.approved;
+
+                    return (
+                      <div>
+                        <p style={{ color: 'var(--text-secondary)', fontSize: '14px', marginBottom: '20px' }}>
+                          Each member's calculated equal share: <strong style={{ color: 'var(--color-gold)', fontSize: '16px' }}>₹{equalShare.toLocaleString()}</strong> (calculated from Total ₹{totalCost.toLocaleString()} split among {eligibleMembers.length} active members).
+                        </p>
+
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '24px' }}>
+                          {eligibleMembers.map((member) => {
+                            const app = approvals.find((a) => a.user_id === member.user_id);
+                            const isApproved = !!app?.approved;
+
+                            return (
+                              <div
+                                key={member.user_id}
+                                className="flex-between"
+                                style={{
+                                  padding: '10px 16px',
+                                  background: 'rgba(255,255,255,0.02)',
+                                  border: '1px solid var(--border-color)',
+                                  borderRadius: 'var(--radius-sm)',
+                                }}
+                              >
+                                <span style={{ fontSize: '13px', color: 'var(--text-primary)', fontWeight: 500 }}>
+                                  {member.profiles?.name} {member.user_id === user?.id && '(You)'}
+                                </span>
+                                <span
+                                  className={`badge ${isApproved ? 'badge-green' : 'badge-rose'}`}
+                                  style={{ fontSize: '10px', padding: '3px 8px' }}
+                                >
+                                  {isApproved ? 'Approved' : 'Waiting'}
+                                </span>
+                              </div>
+                            );
+                          })}
+                        </div>
+
+                        {hasApproved ? (
+                          <div style={{ textAlign: 'center', padding: '14px', background: 'rgba(16,185,129,0.05)', borderRadius: 'var(--radius-sm)', border: '1px solid rgba(16,185,129,0.15)', color: 'var(--color-green)', fontSize: '13px', fontWeight: 600 }}>
+                            ✓ You have approved the cart and your equal share of ₹{equalShare.toLocaleString()}!
+                          </div>
+                        ) : (
+                          <button
+                            onClick={handleApproveCartAndShare}
+                            className="btn btn-primary"
+                            style={{ width: '100%', padding: '14px' }}
+                          >
+                            Approve Cart & Share (₹{equalShare.toLocaleString()})
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })()}
+                </div>
+              </div>
+            )}
+
+            {/* Ready For Payment Phase: Upfront Host Checkout */}
+            {cart.status === 'ready_for_payment' && (
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '30px' }}>
+                <div className="card">
+                  <h3 style={{ fontSize: '20px', fontWeight: '700', color: 'white', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    <DollarSign size={20} style={{ color: 'var(--color-gold)' }} /> Upfront Host Checkout
+                  </h3>
+
+                  {user && cart.host_user_id && user.id === cart.host_user_id ? (
+                    <div>
+                      <p style={{ color: 'var(--text-secondary)', fontSize: '14px', marginBottom: '24px' }}>
+                        You are the assigned **Host** for this session. Please checkout and pay 100% of the total cart amount upfront.
+                      </p>
+                      
+                      <div style={{ marginBottom: '24px', background: 'rgba(255,255,255,0.02)', padding: '16px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)' }}>
+                        <div className="flex-between" style={{ fontSize: '14px', marginBottom: '8px' }}>
+                          <span style={{ color: 'var(--text-secondary)' }}>Total Upfront Payment:</span>
+                          <span style={{ fontWeight: 700, color: 'var(--color-gold)' }}>₹{totalCost.toLocaleString()}</span>
+                        </div>
+                        {(() => {
+                          const eligibleMembers = members.filter((m) => m.user_id !== cart.receiver_user_id);
+                          const equalShare = eligibleMembers.length > 0 ? totalCost / eligibleMembers.length : 0;
+                          return (
+                            <div className="flex-between" style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+                              <span>Members Share to Reimburse You:</span>
+                              <span>₹{equalShare.toLocaleString()} each</span>
+                            </div>
+                          );
+                        })()}
+                      </div>
+
+                      {/* Decrypted Shipping Address */}
+                      {cart.receiver_user_id && (
+                        <div style={{ marginBottom: '24px' }}>
+                          <h4 style={{ fontSize: '13px', fontWeight: '700', color: 'white', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                            <MapPin size={16} style={{ color: 'var(--color-gold)' }} /> Delivery Address
+                          </h4>
+                          {loadingAddress ? (
+                            <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Decrypting...</div>
+                          ) : decryptedAddress ? (
+                            <div style={{ padding: '12px 14px', background: 'rgba(0,0,0,0.2)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-sm)', fontSize: '13px', color: 'white', lineHeight: '1.5' }}>
+                              {decryptedAddress}
+                            </div>
+                          ) : (
+                            <div style={{ fontSize: '12px', color: 'var(--color-rose)' }}>Address unavailable.</div>
+                          )}
+                        </div>
+                      )}
+
+                      <button
+                        onClick={handleHostCheckout}
+                        className="btn btn-primary"
+                        style={{ width: '100%', padding: '14px' }}
+                      >
+                        Checkout & Pay ₹{totalCost.toLocaleString()} Upfront
+                      </button>
+                    </div>
+                  ) : (
+                    <div>
+                      <p style={{ color: 'var(--text-secondary)', fontSize: '14px', marginBottom: '20px' }}>
+                        Consensus approved! Waiting for the Host to pay 100% upfront.
+                      </p>
+                      <p style={{ color: 'var(--text-muted)', fontSize: '13px', marginBottom: '24px' }}>
+                        Host: <strong style={{ color: 'white' }}>{members.find(m => m.user_id === cart.host_user_id)?.profiles?.name || 'Assigned Host'}</strong>
+                      </p>
+
+                      {/* Decrypted Shipping Address */}
+                      {cart.receiver_user_id && (
+                        <div style={{ marginBottom: '24px' }}>
+                          <h4 style={{ fontSize: '13px', fontWeight: '700', color: 'white', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                            <MapPin size={16} style={{ color: 'var(--color-gold)' }} /> Delivery Address
+                          </h4>
+                          {loadingAddress ? (
+                            <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Decrypting...</div>
+                          ) : decryptedAddress ? (
+                            <div style={{ padding: '12px 14px', background: 'rgba(0,0,0,0.2)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-sm)', fontSize: '13px', color: 'white', lineHeight: '1.5' }}>
+                              {decryptedAddress}
+                            </div>
+                          ) : (
+                            <div style={{ fontSize: '12px', color: 'var(--color-rose)' }}>Address unavailable.</div>
+                          )}
+                        </div>
+                      )}
+
+                      <div style={{ textAlign: 'center', padding: '14px', background: 'rgba(212,175,55,0.05)', borderRadius: 'var(--radius-sm)', border: '1px solid rgba(212,175,55,0.15)', color: 'var(--color-gold)', fontSize: '13px' }}>
+                        Once the Host completes the payment, you will receive an instant notification to reimburse your equal share.
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Old / Pending Payment State (Fallback) */}
             {cart.status === 'pending_payment' && (
               <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '30px' }}>
                 
