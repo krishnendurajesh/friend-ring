@@ -597,29 +597,7 @@ export default function SharedCartPage({ params }: { params: Promise<{ id: strin
     }
   };
 
-  const handleLockCart = async () => {
-    if (!cart?.id) return;
-    setLoading(true);
-    try {
-      const { error } = await supabase
-        .from('carts')
-        .update({
-          status: 'locked',
-          locked_at: new Date().toISOString(),
-        })
-        .eq('id', cart.id);
 
-      if (error) {
-        alert('Failed to lock cart: ' + error.message);
-      } else {
-        await loadRingData(user.id);
-      }
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const handleApproveCartAndShare = async () => {
     if (!cart?.id || !user?.id) return;
@@ -1320,110 +1298,93 @@ export default function SharedCartPage({ params }: { params: Promise<{ id: strin
                   </div>
                 )}
 
-                {/* Lock Action Card */}
-                <div className="card">
-                  <h3 style={{ fontSize: '20px', fontWeight: '700', color: 'white', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '10px' }}>
-                    <Lock size={20} style={{ color: 'var(--color-gold)' }} /> Request Consensus Approval
-                  </h3>
-                  <p style={{ color: 'var(--text-secondary)', fontSize: '13px', marginBottom: '24px' }}>
-                    Ready to lock the cart? Transitioning to locked starts a 1-hour countdown for all members to approve the items and their equal share.
-                  </p>
-                  <button
-                    onClick={handleLockCart}
-                    className="btn btn-primary"
-                    style={{ width: '100%', padding: '14px' }}
-                    disabled={cartItems.length === 0}
-                  >
-                    Lock Cart & Request Approval
-                  </button>
-                </div>
+                {/* Member Approvals (Consensus) Checklist */}
+                {cartItems.length > 0 && (
+                  <div className="card">
+                    <h3 style={{ fontSize: '20px', fontWeight: '700', color: 'white', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '10px' }}>
+                      <CheckSquare size={20} style={{ color: 'var(--color-gold)' }} /> Member Approvals (Consensus)
+                    </h3>
+                    <p style={{ color: 'var(--text-secondary)', fontSize: '13px', marginBottom: '20px' }}>
+                      To purchase this gift, all other members must approve. Once everyone approves, the cart will automatically lock and the Host will have 1 hour to pay upfront.
+                    </p>
 
-              </div>
-            )}
+                    {(() => {
+                      const eligibleMembers = members.filter((m) => m.user_id !== cart.receiver_user_id);
+                      const equalShare = eligibleMembers.length > 0 ? totalCost / eligibleMembers.length : 0;
+                      const approvedObj = approvals.find((a) => a.user_id === user?.id);
+                      const hasApproved = !!approvedObj?.approved;
 
-            {/* Lock Phase: Consensus Approvals with Countdown */}
-            {cart.status === 'locked' && (
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '30px' }}>
-                <div className="card">
-                  <h3 style={{ fontSize: '20px', fontWeight: '700', color: 'white', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '10px' }}>
-                    <CheckSquare size={20} style={{ color: 'var(--color-gold)' }} /> Member Approvals (Consensus)
-                  </h3>
+                      return (
+                        <div>
+                          <p style={{ color: 'var(--text-secondary)', fontSize: '14px', marginBottom: '20px' }}>
+                            Each member's calculated equal share: <strong style={{ color: 'var(--color-gold)', fontSize: '16px' }}>₹{equalShare.toLocaleString()}</strong> (calculated from Total ₹{totalCost.toLocaleString()} split among {eligibleMembers.length} active members).
+                          </p>
 
-                  {cart.locked_at && (
-                    <div style={{ padding: '12px 16px', background: 'rgba(212,175,55,0.05)', border: '1px solid rgba(212,175,55,0.2)', borderRadius: 'var(--radius-sm)', marginBottom: '20px', fontSize: '13px', color: 'var(--text-primary)' }}>
-                      ⏳ Cart locked! Time remaining for all members to approve: <Countdown targetTime={cart.locked_at} onComplete={() => loadRingData(user.id)} />
-                    </div>
-                  )}
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '24px' }}>
+                            {eligibleMembers.map((member) => {
+                              const app = approvals.find((a) => a.user_id === member.user_id);
+                              const isApproved = !!app?.approved;
 
-                  {(() => {
-                    const eligibleMembers = members.filter((m) => m.user_id !== cart.receiver_user_id);
-                    const equalShare = eligibleMembers.length > 0 ? totalCost / eligibleMembers.length : 0;
-                    const approvedObj = approvals.find((a) => a.user_id === user?.id);
-                    const hasApproved = !!approvedObj?.approved;
-
-                    return (
-                      <div>
-                        <p style={{ color: 'var(--text-secondary)', fontSize: '14px', marginBottom: '20px' }}>
-                          Each member's calculated equal share: <strong style={{ color: 'var(--color-gold)', fontSize: '16px' }}>₹{equalShare.toLocaleString()}</strong> (calculated from Total ₹{totalCost.toLocaleString()} split among {eligibleMembers.length} active members).
-                        </p>
-
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '24px' }}>
-                          {eligibleMembers.map((member) => {
-                            const app = approvals.find((a) => a.user_id === member.user_id);
-                            const isApproved = !!app?.approved;
-
-                            return (
-                              <div
-                                key={member.user_id}
-                                className="flex-between"
-                                style={{
-                                  padding: '10px 16px',
-                                  background: 'rgba(255,255,255,0.02)',
-                                  border: '1px solid var(--border-color)',
-                                  borderRadius: 'var(--radius-sm)',
-                                }}
-                              >
-                                <span style={{ fontSize: '13px', color: 'var(--text-primary)', fontWeight: 500 }}>
-                                  {member.profiles?.name} {member.user_id === user?.id && '(You)'}
-                                </span>
-                                <span
-                                  className={`badge ${isApproved ? 'badge-green' : 'badge-rose'}`}
-                                  style={{ fontSize: '10px', padding: '3px 8px' }}
+                              return (
+                                <div
+                                  key={member.user_id}
+                                  className="flex-between"
+                                  style={{
+                                    padding: '10px 16px',
+                                    background: 'rgba(255,255,255,0.02)',
+                                    border: '1px solid var(--border-color)',
+                                    borderRadius: 'var(--radius-sm)',
+                                  }}
                                 >
-                                  {isApproved ? 'Approved' : 'Waiting'}
-                                </span>
-                              </div>
-                            );
-                          })}
-                        </div>
-
-                        {hasApproved ? (
-                          <div style={{ textAlign: 'center', padding: '14px', background: 'rgba(16,185,129,0.05)', borderRadius: 'var(--radius-sm)', border: '1px solid rgba(16,185,129,0.15)', color: 'var(--color-green)', fontSize: '13px', fontWeight: 600 }}>
-                            ✓ You have approved the cart and your equal share of ₹{equalShare.toLocaleString()}!
+                                  <span style={{ fontSize: '13px', color: 'var(--text-primary)', fontWeight: 500 }}>
+                                    {member.profiles?.name} {member.user_id === user?.id && '(You)'}
+                                  </span>
+                                  <span
+                                    className={`badge ${isApproved ? 'badge-green' : 'badge-rose'}`}
+                                    style={{ fontSize: '10px', padding: '3px 8px' }}
+                                  >
+                                    {isApproved ? 'Approved' : 'Waiting'}
+                                  </span>
+                                </div>
+                              );
+                            })}
                           </div>
-                        ) : (
-                          <button
-                            onClick={handleApproveCartAndShare}
-                            className="btn btn-primary"
-                            style={{ width: '100%', padding: '14px' }}
-                          >
-                            Approve Cart & Share (₹{equalShare.toLocaleString()})
-                          </button>
-                        )}
-                      </div>
-                    );
-                  })()}
-                </div>
+
+                          {hasApproved ? (
+                            <div style={{ textAlign: 'center', padding: '14px', background: 'rgba(16,185,129,0.05)', borderRadius: 'var(--radius-sm)', border: '1px solid rgba(16,185,129,0.15)', color: 'var(--color-green)', fontSize: '13px', fontWeight: 600 }}>
+                              ✓ You have approved the cart and your equal share of ₹{equalShare.toLocaleString()}!
+                            </div>
+                          ) : (
+                            <button
+                              onClick={handleApproveCartAndShare}
+                              className="btn btn-primary"
+                              style={{ width: '100%', padding: '14px' }}
+                            >
+                              Approve Cart & Share (₹{equalShare.toLocaleString()})
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })()}
+                  </div>
+                )}
+
               </div>
             )}
 
-            {/* Ready For Payment Phase: Upfront Host Checkout */}
-            {cart.status === 'ready_for_payment' && (
+            {/* Locked Phase: Upfront Host Checkout with 1-Hour Timer */}
+            {cart.status === 'locked' && (
               <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '30px' }}>
                 <div className="card">
                   <h3 style={{ fontSize: '20px', fontWeight: '700', color: 'white', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '10px' }}>
                     <DollarSign size={20} style={{ color: 'var(--color-gold)' }} /> Upfront Host Checkout
                   </h3>
+
+                  {cart.locked_at && (
+                    <div style={{ padding: '12px 16px', background: 'rgba(212,175,55,0.05)', border: '1px solid rgba(212,175,55,0.2)', borderRadius: 'var(--radius-sm)', marginBottom: '20px', fontSize: '13px', color: 'var(--text-primary)' }}>
+                      ⏳ Payment window active! Time remaining for Host to complete upfront payment: <Countdown targetTime={cart.locked_at} onComplete={() => loadRingData(user.id)} />
+                    </div>
+                  )}
 
                   {user && cart.host_user_id && user.id === cart.host_user_id ? (
                     <div>
